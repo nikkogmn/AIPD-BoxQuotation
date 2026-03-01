@@ -702,6 +702,7 @@ export default function MainApp() {
   };
   
   // --- เปลี่ยนฟังก์ชันให้เป็น async เพื่อให้คุยกับฐานข้อมูลได้ ---
+// --- ฟังก์ชันยืนยันการทำรายการ (รองรับ Firebase แบบเต็มรูปแบบสำหรับลูกค้า) ---
   const handleConfirmAction = async () => {
     let setData;
     // เลือกชุดข้อมูลที่จะอัปเดตตามแท็บที่ใช้งานอยู่
@@ -720,8 +721,22 @@ export default function MainApp() {
 
     if (!setData) return;
 
+    // ----- [Block 5: ระบบลบข้อมูล (Delete)] -----
     if (modalMode === 'delete') {
-        setData(prev => prev.filter(i => i.id !== selectedItem.id));
+        if (activeSubTab === 'customer') {
+            try {
+                // สั่งลบข้อมูลใน Firestore โดยอ้างอิงจาก ID
+                await deleteDoc(doc(db, "customers", selectedItem.id.toString()));
+                // ลบออกจากหน้าจอ
+                setData(prev => prev.filter(i => i.id !== selectedItem.id));
+            } catch (error) {
+                console.error("เกิดข้อผิดพลาดในการลบข้อมูล: ", error);
+                alert("ลบข้อมูลไม่สำเร็จ กรุณาลองใหม่");
+            }
+        } else {
+            setData(prev => prev.filter(i => i.id !== selectedItem.id));
+        }
+        
     } else if (modalMode === 'copy') {
         const newItem = {
             ...selectedItem,
@@ -741,24 +756,20 @@ export default function MainApp() {
         setFormData({ ...selectedItem });
         setModalMode('edit'); 
         return; 
+
+    // ----- [Block 3: ระบบสร้างข้อมูลใหม่ (Create) ที่ทำไปแล้ว] -----
     } else if (modalMode === 'confirmSaveCreate' || modalMode === 'confirmSaveCustomerFromQuot') {
-        
-        // 1. เตรียมข้อมูลที่จะบันทึก (ยังไม่ใส่ ID เพราะ Firebase จะสร้างให้)
         const newItemData = {
             ...formData,
-            createdBy: 'System', // อนาคตสามารถดึงอีเมลคนล็อคอินมาใส่ได้
+            createdBy: 'System', 
             createdDate: getDateTime(),
             lastModifiedBy: 'System',
             lastModifiedDate: getDateTime(),
         };
 
-        // 2. เช็คว่าถ้าเป็น "ข้อมูลลูกค้า" ให้ส่งขึ้น Firebase
         if (activeSubTab === 'customer' || modalMode === 'confirmSaveCustomerFromQuot') {
             try {
-                // คำสั่งส่งข้อมูลขึ้น Firebase Cloud Firestore
                 const docRef = await addDoc(collection(db, "customers"), newItemData);
-                
-                // นำ ID ที่ Firebase สร้างให้ มาประกอบรวมกับข้อมูล แล้วโชว์บนหน้าจอ
                 const newCustomer = { id: docRef.id, ...newItemData };
                 setData(prev => [...prev, newCustomer]);
                 
@@ -767,20 +778,39 @@ export default function MainApp() {
                 }
             } catch (error) {
                 console.error("เกิดข้อผิดพลาดในการบันทึกข้อมูล: ", error);
-                alert("บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่");
+                alert("บันทึกข้อมูลไม่สำเร็จ");
             }
         } else {
-            // ถ้าเป็น Master Data ตัวอื่นๆ (ที่ยังไม่ได้ต่อ Firebase) ให้เซฟลงเครื่องไปก่อน
             const newItem = { id: Date.now(), ...newItemData };
             setData(prev => [...prev, newItem]);
         }
 
+    // ----- [Block 4: ระบบแก้ไขข้อมูล (Update)] -----
     } else if (modalMode === 'confirmSaveEdit') {
-         setData(prev => prev.map(item => item.id === formData.id ? {
+        const updatedData = {
             ...formData,
             lastModifiedBy: 'System',
             lastModifiedDate: getDateTime()
-         } : item));
+        };
+
+        if (activeSubTab === 'customer') {
+            try {
+                // ก๊อปปี้ข้อมูลและลบช่อง ID ออกก่อนส่งไปอัปเดต (Firebase ไม่ชอบให้เอา ID ไปทับ)
+                const dataToUpdate = { ...updatedData };
+                delete dataToUpdate.id; 
+
+                // ส่งข้อมูลไปอัปเดตทับของเดิมใน Firestore
+                await updateDoc(doc(db, "customers", formData.id.toString()), dataToUpdate);
+                
+                // อัปเดตหน้าจอให้เปลี่ยนตาม
+                setData(prev => prev.map(item => item.id === formData.id ? updatedData : item));
+            } catch (error) {
+                console.error("เกิดข้อผิดพลาดในการแก้ไขข้อมูล: ", error);
+                alert("แก้ไขข้อมูลไม่สำเร็จ");
+            }
+        } else {
+             setData(prev => prev.map(item => item.id === formData.id ? updatedData : item));
+        }
     }
 
     // ปิด Popup และเคลียร์ข้อมูล
@@ -788,7 +818,7 @@ export default function MainApp() {
     setSelectedItem(null);
     if(modalMode.includes('Save')) setFormData({});
   };
-
+  
   const handleCreateClick = () => {
     // Determine default form data
     if (activeMainTab === 'admin') {
