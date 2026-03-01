@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Trash2, Copy, Edit, Plus, Save, X, AlertCircle, FileText, User, Box, Grid, Palette, Eye, Ruler, StickyNote, Layers, DollarSign, Truck, ArrowLeftRight, Droplet, Scissors, Shield, Settings, FileInput, Users, Database, Globe, Briefcase, Search, CheckCircle, FilePlus, ChevronLeft, Calculator, Percent, CreditCard, Package } from 'lucide-react';
-
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { db } from './firebase';
 // --- Constants ---
 
 const INDUSTRY_TYPES = [
@@ -497,7 +498,7 @@ export default function MainApp() {
 
   // 7. Customers
   const [customers, setCustomers] = useState([
-      {
+      /*{
           id: 1,
           name: 'เจ๊แต๋ว ผลไม้สด',
           company: 'บจก. ผลไม้ไทยรุ่งเรือง',
@@ -512,9 +513,26 @@ export default function MainApp() {
           createdDate: '2023-12-01 10:00',
           lastModifiedBy: 'Sales1',
           lastModifiedDate: '2023-12-01 10:00'
-      }
+      }*/
   ]);
+  // --- Firebase Data Fetching ---
+  const fetchCustomers = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, "customers"));
+      const loadedData = querySnapshot.docs.map(doc => ({
+        id: doc.id, // ใช้ ID ที่ได้จาก Firestore จริงๆ
+        ...doc.data()
+      }));
+      setCustomers(loadedData);
+    } catch (error) {
+      console.error("โหลดข้อมูลลูกค้าไม่สำเร็จ: ", error);
+    }
+  };
 
+  // สั่งให้ดึงข้อมูลทันทีที่เปิดแอป (รันแค่ครั้งเดียวตอนโหลด)
+  useEffect(() => {
+    fetchCustomers();
+  }, []);
   // 8. Quotations
   const [quotationView, setQuotationView] = useState('list'); 
   const [currentQuot, setCurrentQuot] = useState({
@@ -683,73 +701,93 @@ export default function MainApp() {
     }
   };
   
-  const handleConfirmAction = () => {
-    let setData;
-    // Determine which dataset to update based on active tabs
-    if (activeMainTab === 'admin') {
-        setData = setAdmins;
-    } else if (activeMainTab === 'masterData') {
-        if (activeSubTab === 'boxStyle') setData = setBoxStyles;
-        else if (activeSubTab === 'paper') setData = setPaperTypes;
-        else if (activeSubTab === 'printBlock') setData = setPrintBlocks;
-        else if (activeSubTab === 'printColor') setData = setPrintColors;
-        else if (activeSubTab === 'dieCut') setData = setDieCutMolds;
-        else if (activeSubTab === 'customer') setData = setCustomers;
-    } else if (activeMainTab === 'quotation' && modalMode.includes('Customer')) { 
-         setData = setCustomers;
-    }
+  // --- เปลี่ยนฟังก์ชันให้เป็น async เพื่อให้คุยกับฐานข้อมูลได้ ---
+  const handleConfirmAction = async () => {
+    let setData;
+    // เลือกชุดข้อมูลที่จะอัปเดตตามแท็บที่ใช้งานอยู่
+    if (activeMainTab === 'admin') {
+        setData = setAdmins;
+    } else if (activeMainTab === 'masterData') {
+        if (activeSubTab === 'boxStyle') setData = setBoxStyles;
+        else if (activeSubTab === 'paper') setData = setPaperTypes;
+        else if (activeSubTab === 'printBlock') setData = setPrintBlocks;
+        else if (activeSubTab === 'printColor') setData = setPrintColors;
+        else if (activeSubTab === 'dieCut') setData = setDieCutMolds;
+        else if (activeSubTab === 'customer') setData = setCustomers;
+    } else if (activeMainTab === 'quotation' && modalMode.includes('Customer')) { 
+         setData = setCustomers;
+    }
 
-    if (!setData) return;
+    if (!setData) return;
 
-    if (modalMode === 'delete') {
-        setData(prev => prev.filter(i => i.id !== selectedItem.id));
-    } else if (modalMode === 'copy') {
-        const newItem = {
-            ...selectedItem,
-            id: Date.now(),
-            email: selectedItem.email ? `copy_${selectedItem.email}` : undefined, 
-            codeName: selectedItem.codeName ? `${selectedItem.codeName}-COPY` : undefined,
-            name: selectedItem.name ? `${selectedItem.name} (Copy)` : undefined,
-            createdBy: 'CurrentUser',
-            createdDate: getDateTime(),
-            lastModifiedBy: 'CurrentUser',
-            lastModifiedDate: getDateTime(),
-        };
-        // Clean up
-        if(activeMainTab === 'admin') { delete newItem.codeName; delete newItem.name; newItem.email = `copy_${selectedItem.email}`; }
-        
-        setData(prev => [...prev, newItem]);
-    } else if (modalMode === 'confirmEdit') {
-        setFormData({ ...selectedItem });
-        setModalMode('edit'); 
-        return; 
-    } else if (modalMode === 'confirmSaveCreate' || modalMode === 'confirmSaveCustomerFromQuot') {
-        const newItem = {
-            id: Date.now(),
-            ...formData,
-            createdBy: 'CurrentUser',
-            createdDate: getDateTime(),
-            lastModifiedBy: 'CurrentUser',
-            lastModifiedDate: getDateTime(),
-        };
-        setData(prev => [...prev, newItem]);
-        
-        if (modalMode === 'confirmSaveCustomerFromQuot') {
-            setCurrentQuot(prev => ({...prev, customerId: newItem.id}));
-        }
+    if (modalMode === 'delete') {
+        setData(prev => prev.filter(i => i.id !== selectedItem.id));
+    } else if (modalMode === 'copy') {
+        const newItem = {
+            ...selectedItem,
+            id: Date.now(),
+            email: selectedItem.email ? `copy_${selectedItem.email}` : undefined, 
+            codeName: selectedItem.codeName ? `${selectedItem.codeName}-COPY` : undefined,
+            name: selectedItem.name ? `${selectedItem.name} (Copy)` : undefined,
+            createdBy: 'System',
+            createdDate: getDateTime(),
+            lastModifiedBy: 'System',
+            lastModifiedDate: getDateTime(),
+        };
+        if(activeMainTab === 'admin') { delete newItem.codeName; delete newItem.name; newItem.email = `copy_${selectedItem.email}`; }
+        setData(prev => [...prev, newItem]);
 
-    } else if (modalMode === 'confirmSaveEdit') {
-         setData(prev => prev.map(item => item.id === formData.id ? {
-            ...formData,
-            lastModifiedBy: 'CurrentUser',
-            lastModifiedDate: getDateTime()
-         } : item));
-    }
+    } else if (modalMode === 'confirmEdit') {
+        setFormData({ ...selectedItem });
+        setModalMode('edit'); 
+        return; 
+    } else if (modalMode === 'confirmSaveCreate' || modalMode === 'confirmSaveCustomerFromQuot') {
+        
+        // 1. เตรียมข้อมูลที่จะบันทึก (ยังไม่ใส่ ID เพราะ Firebase จะสร้างให้)
+        const newItemData = {
+            ...formData,
+            createdBy: 'System', // อนาคตสามารถดึงอีเมลคนล็อคอินมาใส่ได้
+            createdDate: getDateTime(),
+            lastModifiedBy: 'System',
+            lastModifiedDate: getDateTime(),
+        };
 
-    setModalMode(null);
-    setSelectedItem(null);
-    if(modalMode.includes('Save')) setFormData({});
-  };
+        // 2. เช็คว่าถ้าเป็น "ข้อมูลลูกค้า" ให้ส่งขึ้น Firebase
+        if (activeSubTab === 'customer' || modalMode === 'confirmSaveCustomerFromQuot') {
+            try {
+                // คำสั่งส่งข้อมูลขึ้น Firebase Cloud Firestore
+                const docRef = await addDoc(collection(db, "customers"), newItemData);
+                
+                // นำ ID ที่ Firebase สร้างให้ มาประกอบรวมกับข้อมูล แล้วโชว์บนหน้าจอ
+                const newCustomer = { id: docRef.id, ...newItemData };
+                setData(prev => [...prev, newCustomer]);
+                
+                if (modalMode === 'confirmSaveCustomerFromQuot') {
+                    setCurrentQuot(prev => ({...prev, customerId: docRef.id}));
+                }
+            } catch (error) {
+                console.error("เกิดข้อผิดพลาดในการบันทึกข้อมูล: ", error);
+                alert("บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่");
+            }
+        } else {
+            // ถ้าเป็น Master Data ตัวอื่นๆ (ที่ยังไม่ได้ต่อ Firebase) ให้เซฟลงเครื่องไปก่อน
+            const newItem = { id: Date.now(), ...newItemData };
+            setData(prev => [...prev, newItem]);
+        }
+
+    } else if (modalMode === 'confirmSaveEdit') {
+         setData(prev => prev.map(item => item.id === formData.id ? {
+            ...formData,
+            lastModifiedBy: 'System',
+            lastModifiedDate: getDateTime()
+         } : item));
+    }
+
+    // ปิด Popup และเคลียร์ข้อมูล
+    setModalMode(null);
+    setSelectedItem(null);
+    if(modalMode.includes('Save')) setFormData({});
+  };
 
   const handleCreateClick = () => {
     // Determine default form data
