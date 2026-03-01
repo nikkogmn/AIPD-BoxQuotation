@@ -356,7 +356,7 @@ export default function MainApp() {
 
   // 1. Box Styles
   const [boxStyles, setBoxStyles] = useState([
-    {
+    /*{
       id: 1,
       codeName: 'RSC-01',
       globalName: 'Regular Slotted Container',
@@ -379,12 +379,12 @@ export default function MainApp() {
       createdDate: '2023-10-26 09:15',
       lastModifiedBy: 'Admin',
       lastModifiedDate: '2023-10-26 11:45'
-    }
+    }*/
   ]);
 
   // 2. Paper Types
   const [paperTypes, setPaperTypes] = useState([
-    {
+    /*{
         id: 1,
         codeName: 'P-KA125-B',
         globalName: 'KA125/CA105 B-Flute',
@@ -417,12 +417,12 @@ export default function MainApp() {
         createdDate: '2023-11-02 10:15',
         lastModifiedBy: 'Admin',
         lastModifiedDate: '2023-11-03 16:20'
-    }
+    }*/
   ]);
 
   // 3. Printing Blocks
   const [printBlocks, setPrintBlocks] = useState([
-      {
+     /* {
           id: 1,
           codeName: 'BLK-RB-S',
           globalName: 'Rubber Block Small (Carved)',
@@ -453,19 +453,19 @@ export default function MainApp() {
           createdDate: '2023-11-15 09:30',
           lastModifiedBy: 'Admin',
           lastModifiedDate: '2023-11-15 09:30'
-      }
+      }*/
   ]);
 
   // 4. Printing Colors
   const [printColors, setPrintColors] = useState([
-      { id: 1, codeName: 'INK-C', globalName: 'Cyan Process', clmvCode: '#00FFFF', price: 250, moq: 5, supplier: 'Toyo Ink', note: 'สีฟ้าแม่สี', createdBy: 'Admin', createdDate: '2023-11-20 08:00', lastModifiedBy: 'Admin', lastModifiedDate: '2023-11-20 08:00' },
+     /* { id: 1, codeName: 'INK-C', globalName: 'Cyan Process', clmvCode: '#00FFFF', price: 250, moq: 5, supplier: 'Toyo Ink', note: 'สีฟ้าแม่สี', createdBy: 'Admin', createdDate: '2023-11-20 08:00', lastModifiedBy: 'Admin', lastModifiedDate: '2023-11-20 08:00' },
       { id: 2, codeName: 'INK-M', globalName: 'Magenta Process', clmvCode: '#FF00FF', price: 250, moq: 5, supplier: 'Toyo Ink', note: 'สีแดงม่วงแม่สี', createdBy: 'Admin', createdDate: '2023-11-20 08:05', lastModifiedBy: 'Admin', lastModifiedDate: '2023-11-20 08:05' },
-      { id: 3, codeName: 'INK-K', globalName: 'Black Process', clmvCode: '#000000', price: 200, moq: 5, supplier: 'Toyo Ink', note: 'สีดำแม่สี', createdBy: 'Admin', createdDate: '2023-11-20 08:10', lastModifiedBy: 'Admin', lastModifiedDate: '2023-11-20 08:10' },
+      { id: 3, codeName: 'INK-K', globalName: 'Black Process', clmvCode: '#000000', price: 200, moq: 5, supplier: 'Toyo Ink', note: 'สีดำแม่สี', createdBy: 'Admin', createdDate: '2023-11-20 08:10', lastModifiedBy: 'Admin', lastModifiedDate: '2023-11-20 08:10' },*/
   ]);
 
   // 5. Die Cut Molds
   const [dieCutMolds, setDieCutMolds] = useState([
-      {
+     /* {
           id: 1,
           codeName: 'DIE-ROT-STD',
           globalName: 'Rotary Die Cut - Standard',
@@ -479,12 +479,12 @@ export default function MainApp() {
           createdDate: '2023-12-01 09:00',
           lastModifiedBy: 'Admin',
           lastModifiedDate: '2023-12-01 09:00'
-      }
+      } */
   ]);
 
   // 6. Admins
   const [admins, setAdmins] = useState([
-      {
+      /*{
           id: 1,
           email: 'admin@system.com',
           tier: 'Level 1',
@@ -493,7 +493,7 @@ export default function MainApp() {
           createdDate: '2023-01-01 00:00',
           lastModifiedBy: 'System',
           lastModifiedDate: '2023-01-01 00:00'
-      }
+      }*/
   ]);
 
   // 7. Customers
@@ -516,22 +516,32 @@ export default function MainApp() {
       }*/
   ]);
   // --- Firebase Data Fetching ---
-  const fetchCustomers = async () => {
-    try {
-      const querySnapshot = await getDocs(collection(db, "customers"));
-      const loadedData = querySnapshot.docs.map(doc => ({
-        id: doc.id, // ใช้ ID ที่ได้จาก Firestore จริงๆ
-        ...doc.data()
-      }));
-      setCustomers(loadedData);
-    } catch (error) {
-      console.error("โหลดข้อมูลลูกค้าไม่สำเร็จ: ", error);
-    }
+// --- Firebase Data Fetching (Universal) ---
+  const fetchAllMasterData = async () => {
+    // ฟังก์ชันช่วยดึงข้อมูลทีละคอลเลกชัน
+    const fetchCollection = async (collectionName, setterFunction) => {
+        try {
+            const querySnapshot = await getDocs(collection(db, collectionName));
+            const loadedData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setterFunction(loadedData);
+        } catch (error) {
+            console.error(`โหลดข้อมูล ${collectionName} ไม่สำเร็จ: `, error);
+        }
+    };
+
+    // สั่งให้ดึงข้อมูลทั้งหมดพร้อมกันเพื่อความรวดเร็ว
+    await Promise.all([
+        fetchCollection("customers", setCustomers),
+        fetchCollection("boxStyles", setBoxStyles),
+        fetchCollection("paperTypes", setPaperTypes),
+        fetchCollection("printBlocks", setPrintBlocks),
+        fetchCollection("printColors", setPrintColors),
+        fetchCollection("dieCutMolds", setDieCutMolds)
+    ]);
   };
 
-  // สั่งให้ดึงข้อมูลทันทีที่เปิดแอป (รันแค่ครั้งเดียวตอนโหลด)
   useEffect(() => {
-    fetchCustomers();
+    fetchAllMasterData();
   }, []);
   // 8. Quotations
   const [quotationView, setQuotationView] = useState('list'); 
@@ -703,122 +713,113 @@ export default function MainApp() {
   
   // --- เปลี่ยนฟังก์ชันให้เป็น async เพื่อให้คุยกับฐานข้อมูลได้ ---
 // --- ฟังก์ชันยืนยันการทำรายการ (รองรับ Firebase แบบเต็มรูปแบบสำหรับลูกค้า) ---
+// --- ฟังก์ชันยืนยันการทำรายการ (รองรับ Master Data ทุกแท็บ) ---
   const handleConfirmAction = async () => {
     let setData;
-    // เลือกชุดข้อมูลที่จะอัปเดตตามแท็บที่ใช้งานอยู่
-    if (activeMainTab === 'admin') {
-        setData = setAdmins;
-    } else if (activeMainTab === 'masterData') {
+    // ตัวช่วยแปลงชื่อ Tab เป็นชื่อ Collection ใน Firestore
+    const collectionMap = {
+        'customer': 'customers',
+        'boxStyle': 'boxStyles',
+        'paper': 'paperTypes',
+        'printBlock': 'printBlocks',
+        'printColor': 'printColors',
+        'dieCut': 'dieCutMolds'
+    };
+    
+    // หาว่าต้องใช้ Collection ชื่ออะไร
+    let targetCollection = collectionMap[activeSubTab];
+    if (activeMainTab === 'quotation' && modalMode.includes('Customer')) {
+        targetCollection = 'customers';
+    }
+
+    // กำหนด State ที่จะอัปเดตหน้าจอ
+    if (activeMainTab === 'admin') setData = setAdmins;
+    else if (activeMainTab === 'masterData') {
         if (activeSubTab === 'boxStyle') setData = setBoxStyles;
         else if (activeSubTab === 'paper') setData = setPaperTypes;
         else if (activeSubTab === 'printBlock') setData = setPrintBlocks;
         else if (activeSubTab === 'printColor') setData = setPrintColors;
         else if (activeSubTab === 'dieCut') setData = setDieCutMolds;
         else if (activeSubTab === 'customer') setData = setCustomers;
-    } else if (activeMainTab === 'quotation' && modalMode.includes('Customer')) { 
-         setData = setCustomers;
-    }
+    } else if (activeMainTab === 'quotation' && modalMode.includes('Customer')) setData = setCustomers;
 
     if (!setData) return;
 
-    // ----- [Block 5: ระบบลบข้อมูล (Delete)] -----
+    // ----- ระบบลบข้อมูล (Delete) -----
     if (modalMode === 'delete') {
-        if (activeSubTab === 'customer') {
+        if (targetCollection) {
             try {
-                // สั่งลบข้อมูลใน Firestore โดยอ้างอิงจาก ID
-                await deleteDoc(doc(db, "customers", selectedItem.id.toString()));
-                // ลบออกจากหน้าจอ
+                await deleteDoc(doc(db, targetCollection, selectedItem.id.toString()));
                 setData(prev => prev.filter(i => i.id !== selectedItem.id));
             } catch (error) {
-                console.error("เกิดข้อผิดพลาดในการลบข้อมูล: ", error);
-                alert("ลบข้อมูลไม่สำเร็จ กรุณาลองใหม่");
+                console.error("Delete Error: ", error); alert("ลบข้อมูลไม่สำเร็จ");
             }
         } else {
             setData(prev => prev.filter(i => i.id !== selectedItem.id));
         }
         
+    // ----- ระบบคัดลอก (Copy) - เก็บลงเครื่องชั่วคราว รอผู้ใช้กดเซฟ -----
     } else if (modalMode === 'copy') {
         const newItem = {
             ...selectedItem,
             id: Date.now(),
-            email: selectedItem.email ? `copy_${selectedItem.email}` : undefined, 
             codeName: selectedItem.codeName ? `${selectedItem.codeName}-COPY` : undefined,
             name: selectedItem.name ? `${selectedItem.name} (Copy)` : undefined,
-            createdBy: 'System',
-            createdDate: getDateTime(),
-            lastModifiedBy: 'System',
-            lastModifiedDate: getDateTime(),
+            createdBy: 'System', createdDate: getDateTime(), lastModifiedBy: 'System', lastModifiedDate: getDateTime(),
         };
-        if(activeMainTab === 'admin') { delete newItem.codeName; delete newItem.name; newItem.email = `copy_${selectedItem.email}`; }
         setData(prev => [...prev, newItem]);
 
     } else if (modalMode === 'confirmEdit') {
-        setFormData({ ...selectedItem });
-        setModalMode('edit'); 
-        return; 
+        setFormData({ ...selectedItem }); setModalMode('edit'); return; 
 
-    // ----- [Block 3: ระบบสร้างข้อมูลใหม่ (Create) ที่ทำไปแล้ว] -----
+    // ----- ระบบสร้างข้อมูลใหม่ (Create) -----
     } else if (modalMode === 'confirmSaveCreate' || modalMode === 'confirmSaveCustomerFromQuot') {
         const newItemData = {
             ...formData,
-            createdBy: 'System', 
-            createdDate: getDateTime(),
-            lastModifiedBy: 'System',
-            lastModifiedDate: getDateTime(),
+            createdBy: 'System', createdDate: getDateTime(), lastModifiedBy: 'System', lastModifiedDate: getDateTime(),
         };
 
-        if (activeSubTab === 'customer' || modalMode === 'confirmSaveCustomerFromQuot') {
+        if (targetCollection) {
             try {
-                const docRef = await addDoc(collection(db, "customers"), newItemData);
-                const newCustomer = { id: docRef.id, ...newItemData };
-                setData(prev => [...prev, newCustomer]);
+                const docRef = await addDoc(collection(db, targetCollection), newItemData);
+                const newRecord = { id: docRef.id, ...newItemData };
+                setData(prev => [...prev, newRecord]);
                 
                 if (modalMode === 'confirmSaveCustomerFromQuot') {
                     setCurrentQuot(prev => ({...prev, customerId: docRef.id}));
                 }
             } catch (error) {
-                console.error("เกิดข้อผิดพลาดในการบันทึกข้อมูล: ", error);
-                alert("บันทึกข้อมูลไม่สำเร็จ");
+                console.error("Create Error: ", error); alert("บันทึกข้อมูลไม่สำเร็จ");
             }
         } else {
             const newItem = { id: Date.now(), ...newItemData };
             setData(prev => [...prev, newItem]);
         }
 
-    // ----- [Block 4: ระบบแก้ไขข้อมูล (Update)] -----
+    // ----- ระบบแก้ไขข้อมูล (Update) -----
     } else if (modalMode === 'confirmSaveEdit') {
-        const updatedData = {
-            ...formData,
-            lastModifiedBy: 'System',
-            lastModifiedDate: getDateTime()
-        };
+        const updatedData = { ...formData, lastModifiedBy: 'System', lastModifiedDate: getDateTime() };
 
-        if (activeSubTab === 'customer') {
+        if (targetCollection) {
             try {
-                // ก๊อปปี้ข้อมูลและลบช่อง ID ออกก่อนส่งไปอัปเดต (Firebase ไม่ชอบให้เอา ID ไปทับ)
                 const dataToUpdate = { ...updatedData };
-                delete dataToUpdate.id; 
-
-                // ส่งข้อมูลไปอัปเดตทับของเดิมใน Firestore
-                await updateDoc(doc(db, "customers", formData.id.toString()), dataToUpdate);
-                
-                // อัปเดตหน้าจอให้เปลี่ยนตาม
+                delete dataToUpdate.id; // ห้ามส่ง ID ไปทับ
+                await updateDoc(doc(db, targetCollection, formData.id.toString()), dataToUpdate);
                 setData(prev => prev.map(item => item.id === formData.id ? updatedData : item));
             } catch (error) {
-                console.error("เกิดข้อผิดพลาดในการแก้ไขข้อมูล: ", error);
-                alert("แก้ไขข้อมูลไม่สำเร็จ");
+                console.error("Update Error: ", error); alert("แก้ไขข้อมูลไม่สำเร็จ");
             }
         } else {
              setData(prev => prev.map(item => item.id === formData.id ? updatedData : item));
         }
     }
 
-    // ปิด Popup และเคลียร์ข้อมูล
+    // ปิด Popup
     setModalMode(null);
     setSelectedItem(null);
     if(modalMode.includes('Save')) setFormData({});
   };
-  
+
   const handleCreateClick = () => {
     // Determine default form data
     if (activeMainTab === 'admin') {
