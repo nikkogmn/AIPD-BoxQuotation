@@ -8,6 +8,7 @@ import MainApp from './MainApp';
 const ALLOWED_EMAILS = [
   'natdanai.n68@gmail.com', // <--- ใส่ของคุณตรงนี้นะครับ
   'malee.srithongkul@gmail.com'
+  'nutt.aipd@gmail.com'
 ];
 
 export default function App() {
