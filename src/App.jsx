@@ -147,7 +147,7 @@ const handleLogin = async () => {
          </button>
       </div>
       {/* โยนสิทธิ์ของ User ไปให้ MainApp จัดการการแสดงผล */}
-      <MainApp userRole={userRole} /> 
+      <MainApp userRole={userRole} userEmail={user.email} /> 
     </div>
   );
 }

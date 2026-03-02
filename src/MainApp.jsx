@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Trash2, Copy, Edit, Plus, Save, X, AlertCircle, FileText, User, Box, Grid, Palette, Eye, Ruler, StickyNote, Layers, DollarSign, Truck, ArrowLeftRight, Droplet, Scissors, Shield, Settings, FileInput, Users, Database, Globe, Briefcase, Search, CheckCircle, FilePlus, ChevronLeft, Calculator, Percent, CreditCard, Package } from 'lucide-react';
 
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc ,setDoc, getDoc } from "firebase/firestore";
 // เพิ่มคำสั่งอัปโหลดไฟล์จาก Firebase Storage
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; 
 // อย่าลืมดึง storage มาจากไฟล์ firebase.js ด้วย
@@ -352,11 +352,25 @@ const convertToDisplay = (value, unit) => {
 
 // --- Main Application ---
 
-export default function MainApp({ userRole }){
+export default function MainApp({ userRole , userEmail}){
   const [activeMainTab, setActiveMainTab] = useState('quotation'); 
   const [activeSubTab, setActiveSubTab] = useState('customer'); 
   const [currentUnit, setCurrentUnit] = useState('cm'); 
   
+   // --- เพิ่ม State สำหรับข้อมูลบริษัท ตรงนี้เลยครับ 👇 ---
+  const defaultCompanyState = {
+      nameTH: '', nameEN: '',
+      addressTH: '', addressEN: '',
+      taxId: '', phone: '',
+      approverTH: '', approverEN: '',
+      signatureUrl: '',
+      auditLogs: []
+  };
+  const [companyData, setCompanyData] = useState(defaultCompanyState);
+  const [originalCompanyData, setOriginalCompanyData] = useState(defaultCompanyState);
+  const [isEditingCompany, setIsEditingCompany] = useState(false);
+  const [isUploadingSig, setIsUploadingSig] = useState(false);
+
   // --- Data States ---
 
   // 1. Box Styles
@@ -533,6 +547,18 @@ const fetchAllMasterData = async () => {
         }
     };
 
+    // --- เพิ่มฟังก์ชันดึงข้อมูลบริษัท (แบบเจาะจง 1 ไฟล์) 👇 ---
+    const fetchCompanyData = async () => {
+        try {
+            const docSnap = await getDoc(doc(db, "appSettings", "companyProfile"));
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                setCompanyData(data);
+                setOriginalCompanyData(data); // เก็บต้นฉบับไว้เทียบตอนแก้
+            }
+        } catch (error) { console.error("โหลดข้อมูลบริษัทไม่สำเร็จ", error); }
+    };
+
     await Promise.all([
         fetchCollection("customers", setCustomers),
         fetchCollection("boxStyles", setBoxStyles),
@@ -540,7 +566,8 @@ const fetchAllMasterData = async () => {
         fetchCollection("printBlocks", setPrintBlocks),
         fetchCollection("printColors", setPrintColors),
         fetchCollection("dieCutMolds", setDieCutMolds),
-        fetchCollection("admins", setAdmins) // 2. เพิ่มบรรทัดนี้ ให้ดึงข้อมูล Admin มาโชว์
+        fetchCollection("admins", setAdmins),
+        fetchCompanyData() // <--- สั่งดึงข้อมูลตรงนี้
     ]);
   };
 
@@ -901,7 +928,78 @@ const handleConfirmAction = async () => {
            setModalMode(modalMode === 'create' ? 'confirmSaveCreate' : 'confirmSaveEdit');
       }
   };
+// --- ลอจิกจัดการข้อมูลบริษัท (App Settings) ---
+  const handleUploadSignature = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      setIsUploadingSig(true);
+      try {
+          const storageRef = ref(storage, `signatures/sig_${Date.now()}_${file.name}`);
+          await uploadBytes(storageRef, file);
+          const url = await getDownloadURL(storageRef);
+          setCompanyData(prev => ({ ...prev, signatureUrl: url }));
+      } catch (error) { alert("อัปโหลดลายเซ็นไม่สำเร็จ"); }
+      finally { setIsUploadingSig(false); }
+  };
 
+const handleSaveCompanyData = async () => {
+      try {
+          const newLogs = [];
+          const fieldsToTrack = [
+              { key: 'nameTH', label: 'ชื่อบริษัท (TH)' }, { key: 'nameEN', label: 'ชื่อบริษัท (EN)' },
+              { key: 'addressTH', label: 'ที่อยู่ (TH)' }, { key: 'addressEN', label: 'ที่อยู่ (EN)' },
+              { key: 'taxId', label: 'เลขประจำตัวผู้เสียภาษี' }, { key: 'phone', label: 'เบอร์โทรศัพท์' },
+              { key: 'approverTH', label: 'ผู้อนุมัติ (TH)' }, { key: 'approverEN', label: 'ผู้อนุมัติ (EN)' },
+              { key: 'signatureUrl', label: 'รูปลายเซ็น' }
+          ];
+
+          fieldsToTrack.forEach(field => {
+              const oldVal = originalCompanyData[field.key] || '';
+              const newVal = companyData[field.key] || '';
+              
+              if (oldVal !== newVal) {
+                  newLogs.push({
+                      fieldName: field.label,
+                      oldValue: oldVal || '-',
+                      newValue: newVal || '-',
+                      modifiedBy: userEmail || 'Admin', // ป้องกัน Error หากดึง Email ไม่มา
+                      modifiedAt: getDateTime()
+                  });
+              }
+          });
+
+          const updatedLogs = newLogs.length > 0 
+              ? [...newLogs, ...(originalCompanyData.auditLogs || [])] 
+              : (originalCompanyData.auditLogs || []);
+
+          // แพ็คข้อมูลใหม่ทั้งหมด (ถ้าช่องไหนไม่ได้กรอก ให้เป็นค่าว่าง '' แทน undefined)
+          const finalDataToSave = { 
+              nameTH: companyData.nameTH || '', 
+              nameEN: companyData.nameEN || '',
+              addressTH: companyData.addressTH || '', 
+              addressEN: companyData.addressEN || '',
+              taxId: companyData.taxId || '', 
+              phone: companyData.phone || '',
+              approverTH: companyData.approverTH || '', 
+              approverEN: companyData.approverEN || '',
+              signatureUrl: companyData.signatureUrl || '',
+              auditLogs: updatedLogs 
+          };
+
+          // บันทึกทับลงไปใน Document เดิม
+          await setDoc(doc(db, "appSettings", "companyProfile"), finalDataToSave, { merge: true });
+          
+          setOriginalCompanyData(finalDataToSave);
+          setCompanyData(finalDataToSave);
+          setIsEditingCompany(false);
+          alert("บันทึกข้อมูลบริษัทและเก็บประวัติการแก้ไขเรียบร้อยแล้ว");
+          
+      } catch (error) {
+          console.error("Save Company Error:", error);
+          // อัปเดตให้แจ้งเตือนบอกด้วยว่า Error จากอะไร จะได้หาเป้าเจอครับ
+          alert("บันทึกข้อมูลไม่สำเร็จ: " + error.message); 
+      }
+  };
   // --- Render Helpers ---
 
   const renderMainTabs = () => {
@@ -2387,15 +2485,108 @@ const handleConfirmAction = async () => {
           )}
 
           {/* 3. App Setting Tab */}
-          {activeMainTab === 'appSetting' && (
-             <div className="bg-white p-16 rounded-xl text-center text-gray-400 border border-dashed border-gray-300 flex flex-col items-center">
-                <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-                    <Globe size={40} className="text-gray-300" />
-                </div>
-                <h3 className="text-xl font-medium text-gray-600 mb-2">App Setting (Global Parameters)</h3>
-                <p className="text-gray-400 max-w-md">ส่วนนี้สำหรับตั้งค่าพารามิเตอร์กลางของระบบ เช่น อัตราแลกเปลี่ยน, ค่าคงที่ต่างๆ</p>
-             </div>
-          )}
+          {/* 3. App Setting Tab */}
+          {activeMainTab === 'appSetting' && (
+              <div className="space-y-6">
+                  {/* ส่วนข้อมูลบริษัท */}
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                      <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                          <div>
+                              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Globe size={20}/> ข้อมูลบริษัท (Company Profile)</h2>
+                              <p className="text-sm text-gray-500">ข้อมูลนี้จะถูกนำไปใช้ในหัวกระดาษและท้ายกระดาษของใบเสนอราคาทุกใบ</p>
+                          </div>
+                          {!isEditingCompany ? (
+                              <Button variant="primary" icon={Edit} onClick={() => setIsEditingCompany(true)}>แก้ไขข้อมูล</Button>
+                          ) : (
+                              <div className="flex gap-2">
+                                  <Button variant="secondary" onClick={() => { setCompanyData(originalCompanyData); setIsEditingCompany(false); }}>ยกเลิก</Button>
+                                  <Button variant="success" icon={Save} onClick={handleSaveCompanyData}>บันทึกข้อมูล</Button>
+                              </div>
+                          )}
+                      </div>
+
+                      <div className="p-6">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                              {/* ภาษาไทย */}
+                              <div className="space-y-4 p-4 bg-blue-50/30 rounded-lg border border-blue-100">
+                                  <h3 className="font-semibold text-blue-800 border-b border-blue-200 pb-2">ข้อมูลภาษาไทย (TH)</h3>
+                                  <InputGroup label="ชื่อบริษัท" value={companyData.nameTH} onChange={v => setCompanyData({...companyData, nameTH: v})} readOnly={!isEditingCompany} placeholder="บริษัท ตัวอย่าง จำกัด" />
+                                  <InputGroup label="ที่อยู่บริษัท" type="textarea" value={companyData.addressTH} onChange={v => setCompanyData({...companyData, addressTH: v})} readOnly={!isEditingCompany} />
+                                  <InputGroup label="ชื่อผู้อนุมัติหลัก" value={companyData.approverTH} onChange={v => setCompanyData({...companyData, approverTH: v})} readOnly={!isEditingCompany} placeholder="นาย อนุมัติ งานไว" />
+                              </div>
+
+                              {/* English */}
+                              <div className="space-y-4 p-4 bg-orange-50/30 rounded-lg border border-orange-100">
+                                  <h3 className="font-semibold text-orange-800 border-b border-orange-200 pb-2">English Info (EN)</h3>
+                                  <InputGroup label="Company Name" value={companyData.nameEN} onChange={v => setCompanyData({...companyData, nameEN: v})} readOnly={!isEditingCompany} placeholder="Example Co., Ltd." />
+                                  <InputGroup label="Company Address" type="textarea" value={companyData.addressEN} onChange={v => setCompanyData({...companyData, addressEN: v})} readOnly={!isEditingCompany} />
+                                  <InputGroup label="Main Approver Name" value={companyData.approverEN} onChange={v => setCompanyData({...companyData, approverEN: v})} readOnly={!isEditingCompany} placeholder="Mr. Approve Fast" />
+                              </div>
+
+                              {/* ข้อมูลกลาง */}
+                              <div className="col-span-1 md:col-span-2 grid grid-cols-2 gap-4 mt-2">
+                                  <InputGroup label="เลขประจำตัวผู้เสียภาษี (Tax ID)" value={companyData.taxId} onChange={v => setCompanyData({...companyData, taxId: v})} readOnly={!isEditingCompany} />
+                                  <InputGroup label="เบอร์โทรศัพท์ (Phone)" value={companyData.phone} onChange={v => setCompanyData({...companyData, phone: v})} readOnly={!isEditingCompany} />
+                              </div>
+
+                              {/* ลายเซ็น */}
+                              <div className="col-span-1 md:col-span-2 mt-4">
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">รูปลายเซ็นผู้อนุมัติ (Signature Image)</label>
+                                  {isEditingCompany && (
+                                      <div className="mb-3">
+                                          <input type="file" accept="image/*" onChange={handleUploadSignature} className="text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer" />
+                                          {isUploadingSig && <span className="text-xs text-blue-500 animate-pulse ml-2">กำลังอัปโหลด...</span>}
+                                      </div>
+                                  )}
+                                  {companyData.signatureUrl ? (
+                                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 inline-block bg-white">
+                                          <img src={companyData.signatureUrl} alt="Signature" className="max-h-24 object-contain" />
+                                      </div>
+                                  ) : (
+                                      <div className="text-sm text-gray-400 italic">ยังไม่มีรูปภาพลายเซ็น</div>
+                                  )}
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* ส่วนตาราง Audit Log */}
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mt-6">
+                      <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
+                          <AlertCircle size={18} className="text-gray-500"/>
+                          <h3 className="font-bold text-gray-800">ประวัติการแก้ไขข้อมูล (Field-Level Audit Log)</h3>
+                      </div>
+                      <div className="overflow-x-auto max-h-[400px]">
+                          <table className="w-full text-left border-collapse text-sm whitespace-nowrap">
+                              <thead className="bg-white sticky top-0 shadow-sm">
+                                  <tr className="text-gray-500 text-xs uppercase tracking-wider">
+                                      <th className="p-4 border-b">วัน-เวลา (Date/Time)</th>
+                                      <th className="p-4 border-b">ผู้แก้ไข (Modified By)</th>
+                                      <th className="p-4 border-b">ช่องที่แก้ (Field)</th>
+                                      <th className="p-4 border-b">ข้อมูลเดิม (Old Value)</th>
+                                      <th className="p-4 border-b">ข้อมูลใหม่ (New Value)</th>
+                                  </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                  {(!companyData.auditLogs || companyData.auditLogs.length === 0) ? (
+                                      <tr><td colSpan="5" className="p-8 text-center text-gray-400">ยังไม่มีประวัติการแก้ไขข้อมูล</td></tr>
+                                  ) : (
+                                      companyData.auditLogs.map((log, idx) => (
+                                          <tr key={idx} className="hover:bg-gray-50">
+                                              <td className="p-4 text-gray-600">{log.modifiedAt}</td>
+                                              <td className="p-4 font-medium text-blue-600">{log.modifiedBy}</td>
+                                              <td className="p-4 font-semibold text-gray-700">{log.fieldName}</td>
+                                              <td className="p-4 text-red-500 max-w-[200px] truncate" title={log.oldValue}><strike>{log.oldValue}</strike></td>
+                                              <td className="p-4 text-green-600 max-w-[200px] truncate" title={log.newValue}>{log.newValue}</td>
+                                          </tr>
+                                      ))
+                                  )}
+                              </tbody>
+                          </table>
+                      </div>
+                  </div>
+              </div>
+          )}
 
           {/* 4. Admin Tab */}
           {activeMainTab === 'admin' && renderAdminTable()}
