@@ -7,7 +7,7 @@ import MainApp from './MainApp';
 // 1. ใส่รายชื่ออีเมลของคุณตรงนี้ (พิมพ์เล็กหรือใหญ่ก็ได้ ระบบจะจัดการให้)
 const ALLOWED_EMAILS = [
   'natdanai.n68@gmail.com', // <--- ใส่ของคุณตรงนี้นะครับ
-  'malee.srithongkul@gmail.com'
+  'malee.srithongkul@gmail.com',
   'nutt.aipd@gmail.com'
 ];
 

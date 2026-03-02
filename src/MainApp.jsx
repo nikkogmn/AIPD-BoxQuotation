@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Trash2, Copy, Edit, Plus, Save, X, AlertCircle, FileText, User, Box, Grid, Palette, Eye, Ruler, StickyNote, Layers, DollarSign, Truck, ArrowLeftRight, Droplet, Scissors, Shield, Settings, FileInput, Users, Database, Globe, Briefcase, Search, CheckCircle, FilePlus, ChevronLeft, Calculator, Percent, CreditCard, Package } from 'lucide-react';
+
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
-import { db } from './firebase';
+// เพิ่มคำสั่งอัปโหลดไฟล์จาก Firebase Storage
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage"; 
+// อย่าลืมดึง storage มาจากไฟล์ firebase.js ด้วย
+import { db, storage } from './firebase';
 // --- Constants ---
 
 const INDUSTRY_TYPES = [
@@ -158,15 +162,16 @@ const Modal = ({ isOpen, title, onClose, children, footer, size = 'md' }) => {
 };
 
 // 4. Box Schematic Component (Updated for better visibility)
-const BoxSchematic = ({ codeName, globalName, dimensions = {} }) => {
-  const isFOL = globalName?.toLowerCase().includes('overlap') || codeName?.toLowerCase().includes('fol');
-  
-  // Base dimensions for the drawing logic
-  const wG = 40;  // Glue
-  const wW = 120; // Width
-  const wD = 140; // Depth
-  const hMain = 200; // Height of main panel
-  const hFlap = isFOL ? 140 : 90; // Height of flap
+const BoxSchematic = ({ codeName, globalName, dimensions = {}, baseType }) => {
+  const isFOL = baseType === 'FOL' || globalName?.toLowerCase().includes('overlap') || codeName?.toLowerCase().includes('fol');
+  
+  const wG = 40;  
+  const wW = 120; 
+  const wD = 140; 
+  const hMain = 200; 
+  
+  // สร้างความแตกต่าง: RSC ฝายาวครึ่งนึง (D/2) | FOL ฝายาวเต็มความลึก (D)
+  const hFlap = isFOL ? wD : wD / 2;
   
   // Calculate total diagram size
   const totalW = wG + (2 * wW) + (2 * wD);
@@ -574,7 +579,7 @@ export default function MainApp() {
   const [modalMode, setModalMode] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [formData, setFormData] = useState({});
-
+  const [isUploading, setIsUploading] = useState(false); // <--- เพิ่มบรรทัดนี้เพื่อทำ Loading รูประหว่างอัปโหลด
   // --- Logic for Blocks ---
   const handleAddBlock = (colorIndex) => {
     const field = colorIndex === 1 ? 'printBlocks1' : 'printBlocks2';
@@ -825,9 +830,17 @@ export default function MainApp() {
     if (activeMainTab === 'admin') {
         setFormData({ email: '', tier: 'Level 3', note: '' });
     } else if (activeMainTab === 'masterData') {
-        if (activeSubTab === 'boxStyle') {
-            setFormData({ codeName: '', globalName: '', formula: '(2*W + 2*D + G + 4*M) * (H + D + 2*M)', note: '', imageUrl: '' });
-        } else if (activeSubTab === 'paper') {
+        // ค้นหาโค้ดส่วนนี้ในฟังก์ชัน handleCreateClick
+        if (activeSubTab === 'boxStyle') {
+            setFormData({ 
+                codeName: '', 
+                globalName: '', 
+                baseType: 'RSC', // 1. ค่าเริ่มต้นเป็นกล่องฝาชน
+                formula: '(2*W + 2*D + G + 4*M) * (H + D + 2*M)', // สูตรของกล่องฝาชน
+                note: '', 
+                imageUrl: '' 
+            });
+        } else if (activeSubTab === 'paper') {
             setFormData({ codeName: '', globalName: '', flute: '', wallType: 'Single Wall', materialCode: '', widths: '', price: '', moq: '', supplier: '', note: '' });
         } else if (activeSubTab === 'printBlock') {
             setFormData({ codeName: '', globalName: '', material: 'บล็อคแกะ (Rubber)', maxWidth: '', maxLength: '', price: '', moq: '', supplier: '', note: '' });
@@ -1606,21 +1619,33 @@ export default function MainApp() {
                                 </div>
 
                                 <div className="flex flex-col">
-                                    <div className="flex-1 bg-gray-50 rounded-xl border border-dashed border-gray-300 flex items-center justify-center p-2 min-h-[300px]">
-                                        {selectedBoxStyle ? (
-                                            <BoxSchematic 
-                                                codeName={selectedBoxStyle.codeName} 
-                                                globalName={selectedBoxStyle.globalName} 
-                                                dimensions={{ W: currentQuot.dimW, D: currentQuot.dimD, H: currentQuot.dimH, G: currentQuot.dimG, M: currentQuot.dimM }}
-                                            />
-                                        ) : (
-                                            <div className="text-center text-gray-400">
-                                                <Box size={32} className="mx-auto mb-2 opacity-20" />
-                                                <p className="text-sm">เลือกรูปแบบกล่องเพื่อดูแบบ</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                    <div className="flex-1 bg-gray-50 rounded-xl border border-dashed border-gray-300 flex items-center justify-center p-2 min-h-[300px]">
+                                        {selectedBoxStyle ? (
+                                            selectedBoxStyle.baseType === 'OTHER' ? (
+                                                selectedBoxStyle.imageUrl ? (
+                                                    <img src={selectedBoxStyle.imageUrl} alt="Box Preview" className="max-h-[300px] object-contain rounded" />
+                                                ) : (
+                                                    <div className="text-center text-gray-400">
+                                                        <AlertCircle size={32} className="mx-auto mb-2 opacity-50" />
+                                                        <p className="text-sm">กล่องรูปแบบพิเศษ (ไม่มีภาพประกอบ)</p>
+                                                    </div>
+                                                )
+                                            ) : (
+                                                <BoxSchematic 
+                                                    baseType={selectedBoxStyle.baseType} 
+                                                    codeName={selectedBoxStyle.codeName} 
+                                                    globalName={selectedBoxStyle.globalName} 
+                                                    dimensions={{ W: currentQuot.dimW, D: currentQuot.dimD, H: currentQuot.dimH, G: currentQuot.dimG, M: currentQuot.dimM }}
+                                                />
+                                            )
+                                        ) : (
+                                            <div className="text-center text-gray-400">
+                                                <Box size={32} className="mx-auto mb-2 opacity-20" />
+                                                <p className="text-sm">เลือกรูปแบบกล่องเพื่อดูแบบ</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1998,19 +2023,122 @@ export default function MainApp() {
             </>
         );
     } else if (activeSubTab === 'boxStyle') {
-        formContent = (
-            <>
-                 <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required />
-                 <InputGroup label="ชื่อแบบ Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} />
-                 <div className="p-4 bg-blue-50 rounded-lg border border-blue-100 mb-4">
-                    <h4 className="text-sm font-semibold text-blue-800 mb-2">ตัวแปร: W, D, H, G, M</h4>
-                    <InputGroup label="สูตรพื้นที่" value={formData.formula} onChange={(v) => setFormData({...formData, formula: v})} />
-                 </div>
-                 <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
-                 <InputGroup label="URL รูปภาพ" value={formData.imageUrl} onChange={(v) => setFormData({...formData, imageUrl: v})} />
-            </>
-        );
-    } else if (activeSubTab === 'paper') {
+        
+        const handleBaseTypeChange = (type) => {
+            let newFormula = '';
+            if (type === 'RSC') newFormula = '(2*W + 2*D + G + 4*M) * (H + D + 2*M)';
+            else if (type === 'FOL') newFormula = '(2*W + 2*D + G + 4*M) * (H + 2*D + 2*M)';
+
+            setFormData({
+                ...formData,
+                baseType: type,
+                formula: newFormula,
+                imageUrl: type !== 'OTHER' ? '' : formData.imageUrl // เคลียร์รูปทิ้งถ้ากลับมาเป็นกล่องมาตรฐาน
+            });
+        };
+
+        // ฟังก์ชันอัปโหลดรูปลง Firebase Storage
+        const handleImageUpload = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            setIsUploading(true);
+            try {
+                // ตั้งชื่อไฟล์ไม่ให้ซ้ำกัน
+                const storageRef = ref(storage, `box-images/${Date.now()}_${file.name}`);
+                await uploadBytes(storageRef, file);
+                const downloadURL = await getDownloadURL(storageRef); // เอา URL ที่ได้มาเก็บลงฐานข้อมูล
+                
+                setFormData({ ...formData, imageUrl: downloadURL });
+            } catch (error) {
+                console.error("Upload Error:", error);
+                alert("อัปโหลดรูปภาพไม่สำเร็จ กรุณาลองใหม่");
+            } finally {
+                setIsUploading(false);
+            }
+        };
+
+        formContent = (
+            <>
+                <div className="grid grid-cols-2 gap-4">
+                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="เช่น RSC-01" />
+                    <InputGroup label="ชื่อแบบ Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} placeholder="เช่น Regular Slotted Container" />
+                </div>
+
+                <InputGroup
+                    label="รูปแบบกล่อง (Box Type)"
+                    type="select"
+                    options={[
+                        {label: 'กล่องฝาชน (RSC)', value: 'RSC'},
+                        {label: 'กล่องฝาเกย (FOL)', value: 'FOL'},
+                        {label: 'อื่นๆ (Others)', value: 'OTHER'}
+                    ]}
+                    value={formData.baseType || 'RSC'}
+                    onChange={handleBaseTypeChange}
+                    required
+                />
+
+                <div className="p-4 bg-blue-50 rounded-lg border border-blue-100 mb-4 shadow-sm">
+                    <div className="mb-3 border-b border-blue-200 pb-2">
+                        <h4 className="text-sm font-bold text-blue-800 mb-2 flex items-center gap-2"><Ruler size={16}/> คำอธิบายตัวแปร (Variables Definition):</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-y-2 text-xs text-blue-700">
+                            <div><span className="font-bold bg-white px-1.5 py-0.5 rounded border border-blue-200">W</span> = ความกว้าง (Width)</div>
+                            <div><span className="font-bold bg-white px-1.5 py-0.5 rounded border border-blue-200">D</span> = ความลึก/ข้าง (Depth)</div>
+                            <div><span className="font-bold bg-white px-1.5 py-0.5 rounded border border-blue-200">H</span> = ความสูง (Height)</div>
+                            <div><span className="font-bold bg-white px-1.5 py-0.5 rounded border border-blue-200">G</span> = ลิ้นกาว (Glue Flap)</div>
+                            <div><span className="font-bold bg-white px-1.5 py-0.5 rounded border border-blue-200">M</span> = ระยะเผื่อพับ (Margin)</div>
+                        </div>
+                    </div>
+                    <InputGroup 
+                        label="สูตรคำนวณพื้นที่กระดาษ (Formula)" 
+                        value={formData.formula} 
+                        onChange={(v) => setFormData({...formData, formula: v})} 
+                        placeholder={formData.baseType === 'OTHER' ? "กรุณากำหนดสูตรของคุณเอง..." : ""}
+                    />
+                </div>
+
+                {/* ถ้ารูปแบบไม่ใช่ อื่นๆ ให้แสดงภาพจำลอง / ถ้าเป็น อื่นๆ ให้แสดงที่อัปโหลดรูป */}
+                {formData.baseType !== 'OTHER' ? (
+                    <div className="mb-4 p-4 border border-gray-200 rounded-lg bg-gray-50 flex flex-col items-center">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2 w-full text-left flex items-center gap-2">
+                            <Eye size={16}/> ภาพจำลองกล่องคลี่ (Live Preview)
+                        </h4>
+                        <div className="w-full bg-white border border-gray-200 rounded p-2 overflow-hidden flex justify-center pointer-events-none">
+                            <BoxSchematic 
+                                baseType={formData.baseType || 'RSC'} 
+                                dimensions={{W: 'W', D: 'D', H: 'H', G: 'G', M: 'M'}} 
+                            />
+                        </div>
+                    </div>
+                ) : (
+                    <div className="mb-4 p-4 border border-orange-200 rounded-lg bg-orange-50">
+                        <h4 className="text-sm font-semibold text-orange-800 w-full text-left flex items-center gap-2 mb-2">
+                            <FilePlus size={16}/> อัปโหลดภาพตัวอย่างกล่อง
+                        </h4>
+                        <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageUpload}
+                            className="block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-orange-100 file:text-orange-700 hover:file:bg-orange-200 cursor-pointer"
+                        />
+                        {isUploading && <p className="text-xs text-blue-500 mt-2 animate-pulse">กำลังอัปโหลดรูปภาพ...</p>}
+                        
+                        {/* พรีวิวรูปที่อัปโหลดเสร็จแล้ว */}
+                        {formData.imageUrl && !isUploading && (
+                            <div className="mt-4 relative inline-block border-2 border-orange-200 rounded p-1 bg-white">
+                                <img src={formData.imageUrl} alt="Uploaded Box" className="max-h-40 object-contain rounded" />
+                                <button onClick={() => setFormData({...formData, imageUrl: ''})} className="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600" title="ลบรูป">
+                                    <X size={14}/>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+                
+                <InputGroup label="Note (หมายเหตุ)" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
+            </>
+        );
+    } else if (activeSubTab === 'paper') {
         formContent = (
             <>
                 <div className="grid grid-cols-2 gap-4">
