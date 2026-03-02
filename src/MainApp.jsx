@@ -352,7 +352,7 @@ const convertToDisplay = (value, unit) => {
 
 // --- Main Application ---
 
-export default function MainApp() {
+export default function MainApp({ userRole }){
   const [activeMainTab, setActiveMainTab] = useState('quotation'); 
   const [activeSubTab, setActiveSubTab] = useState('customer'); 
   const [currentUnit, setCurrentUnit] = useState('cm'); 
@@ -522,8 +522,7 @@ export default function MainApp() {
   ]);
   // --- Firebase Data Fetching ---
 // --- Firebase Data Fetching (Universal) ---
-  const fetchAllMasterData = async () => {
-    // ฟังก์ชันช่วยดึงข้อมูลทีละคอลเลกชัน
+const fetchAllMasterData = async () => {
     const fetchCollection = async (collectionName, setterFunction) => {
         try {
             const querySnapshot = await getDocs(collection(db, collectionName));
@@ -534,14 +533,14 @@ export default function MainApp() {
         }
     };
 
-    // สั่งให้ดึงข้อมูลทั้งหมดพร้อมกันเพื่อความรวดเร็ว
     await Promise.all([
         fetchCollection("customers", setCustomers),
         fetchCollection("boxStyles", setBoxStyles),
         fetchCollection("paperTypes", setPaperTypes),
         fetchCollection("printBlocks", setPrintBlocks),
         fetchCollection("printColors", setPrintColors),
-        fetchCollection("dieCutMolds", setDieCutMolds)
+        fetchCollection("dieCutMolds", setDieCutMolds),
+        fetchCollection("admins", setAdmins) // 2. เพิ่มบรรทัดนี้ ให้ดึงข้อมูล Admin มาโชว์
     ]);
   };
 
@@ -592,37 +591,29 @@ export default function MainApp() {
     setCurrentQuot({ ...currentQuot, [field]: [...currentBlocks, newBlock] });
   };
 
-  const handleUpdateBlock = (colorIndex, blockId, field, value) => {
-      const stateField = colorIndex === 1 ? 'printBlocks1' : 'printBlocks2';
-      const updatedBlocks = currentQuot[stateField].map(b => {
-          if (b.id === blockId) {
-              const updatedB = { ...b, [field]: value };
-              // Calculate Price if type or size changes
-              if (field === 'typeId' || field === 'w' || field === 'l') {
-                  const typeId = field === 'typeId' ? value : b.typeId;
-                  const w = field === 'w' ? parseFloat(value) || 0 : b.w;
-                  const l = field === 'l' ? parseFloat(value) || 0 : b.l;
-                  
-                  const blockType = printBlocks.find(pb => pb.id.toString() === typeId.toString());
-                  if (blockType) {
-                      // Logic: Price per unit from Master Data * Area Factor (Mock logic as per prompt req)
-                      // Or simply base price. Let's assume Master Price is base, plus size factor.
-                      // For simplicity and prompt adherence "Calculate price according to unit cost":
-                      // We will use (Width * Length) * 2 (Dummy Factor) + Base Price
-                      // NOTE: In real world, price is usually fixed per sq inch.
-                      // Let's assume Master Data Price is the cost per sq.cm.
-                      // updatedB.price = (w * l) * (blockType.price / 100); 
-                      
-                      // Using simpler logic: Master Data Price is Fixed Price per block.
-                      updatedB.price = blockType.price; 
-                  }
-              }
-              return updatedB;
-          }
-          return b;
-      });
-      setCurrentQuot({ ...currentQuot, [stateField]: updatedBlocks });
-  };
+const handleUpdateBlock = (colorIndex, blockId, field, value) => {
+      const stateField = colorIndex === 1 ? 'printBlocks1' : 'printBlocks2';
+      const updatedBlocks = currentQuot[stateField].map(b => {
+          if (b.id === blockId) {
+              const updatedB = { ...b, [field]: value };
+              // ถ้ามีการเปลี่ยน ชนิดบล็อค, ความกว้าง หรือ ความยาว ให้คำนวณราคาใหม่
+              if (field === 'typeId' || field === 'w' || field === 'l') {
+                  const typeId = field === 'typeId' ? value : b.typeId;
+                  const w = field === 'w' ? parseFloat(value) || 0 : parseFloat(b.w) || 0;
+                  const l = field === 'l' ? parseFloat(value) || 0 : parseFloat(b.l) || 0;
+                  
+                  const blockType = printBlocks.find(pb => pb.id.toString() === typeId.toString());
+                  if (blockType) {
+                      // คำนวณ: กว้าง x ยาว (ตารางนิ้ว) * ราคาต่อตารางนิ้วจาก Master Data
+                      updatedB.price = (w * l) * parseFloat(blockType.price || 0); 
+                  }
+              }
+              return updatedB;
+          }
+          return b;
+      });
+      setCurrentQuot({ ...currentQuot, [stateField]: updatedBlocks });
+  };
 
   const handleRemoveBlock = (colorIndex, blockId) => {
       const field = colorIndex === 1 ? 'printBlocks1' : 'printBlocks2';
@@ -634,22 +625,46 @@ export default function MainApp() {
 
   // --- Calculation Logic ---
   const calculateTotals = () => {
-      // 1. Box Cost (Approximate Logic)
-      // Area = ((2W + 2D + G) * (H + D)) / 10000 (sqm)
-      const W = parseFloat(currentQuot.dimW) || 0;
-      const D = parseFloat(currentQuot.dimD) || 0;
-      const H = parseFloat(currentQuot.dimH) || 0;
-      const G = parseFloat(currentQuot.dimG) || 0;
-      const paper = paperTypes.find(p => p.id.toString() === currentQuot.paperTypeId);
-      
-      const sheetW = (2 * W) + (2 * D) + G;
-      const sheetL = H + D; // Simplified formula
-      const area = (sheetW * sheetL) / 10000; // sq.m
-      const paperPrice = paper ? parseFloat(paper.price) : 0;
-      
-      const rawBoxCost = area * paperPrice; // Material Cost
-      const colorCostPerBox = parseFloat(currentQuot.printCostPerBox) || 0;
-      const boxCostTotal = rawBoxCost + colorCostPerBox; // A
+      // 1. Box Cost (คำนวณสูตร Dynamic + แปลงเป็นตารางฟุต)
+      const W = parseFloat(currentQuot.dimW) || 0;
+      const D = parseFloat(currentQuot.dimD) || 0;
+      const H = parseFloat(currentQuot.dimH) || 0;
+      const G = parseFloat(currentQuot.dimG) || 0;
+      const M = parseFloat(currentQuot.dimM) || 0;
+      
+      const paper = paperTypes.find(p => p.id.toString() === currentQuot.paperTypeId);
+      const selectedBoxStyle = boxStyles.find(b => b.id.toString() === currentQuot.boxStyleId);
+      
+      let areaSqCm = 0;
+
+      // --- พระเอกของเรา: ประมวลผลสูตรจากข้อความ (Dynamic Formula) ---
+      if (selectedBoxStyle && selectedBoxStyle.formula) {
+          try {
+              // ใช้ Function() เพื่อเปลี่ยนตัวหนังสือสูตร (เช่น "(2*W + 2*D + G) * (H+D)") ให้เป็นคำสั่งคำนวณจริง
+              const calcArea = new Function('W', 'D', 'H', 'G', 'M', `return ${selectedBoxStyle.formula};`);
+              
+              // โยนค่าจากหน้าจอเข้าไปในสมการ
+              areaSqCm = calcArea(W, D, H, G, M);
+              
+              // ป้องกันกรณีสูตรผิดพลาดหรือติดลบ
+              if (isNaN(areaSqCm) || areaSqCm < 0) areaSqCm = 0;
+          } catch (error) {
+              console.error("เกิดข้อผิดพลาดในสูตรคำนวณของรูปแบบกล่อง:", error);
+              areaSqCm = 0;
+          }
+      }
+      
+      // แปลงจาก ตารางเซนติเมตร เป็น ตารางฟุต (1 ตร.ฟุต = 929.0304 ตร.ซม.)
+      const areaSqFt = areaSqCm / 929.0304; 
+      
+      // ดึงราคาต่อตารางฟุต
+      const paperPricePerSqFt = paper ? parseFloat(paper.price) : 0;
+      
+      // ต้นทุนกระดาษ = พื้นที่(ตร.ฟุต) x ราคา(ต่อ ตร.ฟุต)
+      const rawBoxCost = areaSqFt * paperPricePerSqFt; 
+      
+      const colorCostPerBox = parseFloat(currentQuot.printCostPerBox) || 0;
+      const boxCostTotal = rawBoxCost + colorCostPerBox; // A
 
       // 2. Block Cost
       const blocks1 = currentQuot.printBlocks1.reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
@@ -719,110 +734,119 @@ export default function MainApp() {
   // --- เปลี่ยนฟังก์ชันให้เป็น async เพื่อให้คุยกับฐานข้อมูลได้ ---
 // --- ฟังก์ชันยืนยันการทำรายการ (รองรับ Firebase แบบเต็มรูปแบบสำหรับลูกค้า) ---
 // --- ฟังก์ชันยืนยันการทำรายการ (รองรับ Master Data ทุกแท็บ) ---
-  const handleConfirmAction = async () => {
-    let setData;
-    // ตัวช่วยแปลงชื่อ Tab เป็นชื่อ Collection ใน Firestore
-    const collectionMap = {
-        'customer': 'customers',
-        'boxStyle': 'boxStyles',
-        'paper': 'paperTypes',
-        'printBlock': 'printBlocks',
-        'printColor': 'printColors',
-        'dieCut': 'dieCutMolds'
-    };
-    
-    // หาว่าต้องใช้ Collection ชื่ออะไร
-    let targetCollection = collectionMap[activeSubTab];
-    if (activeMainTab === 'quotation' && modalMode.includes('Customer')) {
-        targetCollection = 'customers';
-    }
+const handleConfirmAction = async () => {
+      let setData;
+      const collectionMap = {
+          'customer': 'customers',
+          'boxStyle': 'boxStyles',
+          'paper': 'paperTypes',
+          'printBlock': 'printBlocks',
+          'printColor': 'printColors',
+          'dieCut': 'dieCutMolds'
+      };
+      
+      let targetCollection = collectionMap[activeSubTab];
+      
+      // 1. ตรวจสอบว่ากำลังอยู่หน้าไหน เพื่อชี้เป้า Database ให้ถูก
+      if (activeMainTab === 'admin') {
+          targetCollection = 'admins';
+          setData = setAdmins;
+      } else if (activeMainTab === 'masterData') {
+          if (activeSubTab === 'boxStyle') setData = setBoxStyles;
+          else if (activeSubTab === 'paper') setData = setPaperTypes;
+          else if (activeSubTab === 'printBlock') setData = setPrintBlocks;
+          else if (activeSubTab === 'printColor') setData = setPrintColors;
+          else if (activeSubTab === 'dieCut') setData = setDieCutMolds;
+          else if (activeSubTab === 'customer') setData = setCustomers;
+      } else if (activeMainTab === 'quotation' && modalMode.includes('Customer')) {
+          targetCollection = 'customers';
+          setData = setCustomers;
+      }
 
-    // กำหนด State ที่จะอัปเดตหน้าจอ
-    if (activeMainTab === 'admin') setData = setAdmins;
-    else if (activeMainTab === 'masterData') {
-        if (activeSubTab === 'boxStyle') setData = setBoxStyles;
-        else if (activeSubTab === 'paper') setData = setPaperTypes;
-        else if (activeSubTab === 'printBlock') setData = setPrintBlocks;
-        else if (activeSubTab === 'printColor') setData = setPrintColors;
-        else if (activeSubTab === 'dieCut') setData = setDieCutMolds;
-        else if (activeSubTab === 'customer') setData = setCustomers;
-    } else if (activeMainTab === 'quotation' && modalMode.includes('Customer')) setData = setCustomers;
+      if (!setData) return;
 
-    if (!setData) return;
+      try {
+          // ----- 1. ลบข้อมูล (Delete) -----
+          if (modalMode === 'delete') {
+              if (targetCollection) {
+                  await deleteDoc(doc(db, targetCollection, selectedItem.id.toString()));
+              }
+              setData(prev => prev.filter(i => i.id !== selectedItem.id));
+              
+              setModalMode(null);
+              setSelectedItem(null);
+              
+          // ----- 2. คัดลอกข้อมูล (Copy) -> เปิดฟอร์มให้แก้ก่อนเซฟจริง -----
+          } else if (modalMode === 'copy') {
+              const copiedData = { ...selectedItem };
+              delete copiedData.id; // ลบ ID ทิ้งเพื่อให้ระบบมองเป็นข้อมูลใหม่
+              
+              // เติมคำว่า -copy ต่อท้าย เพื่อให้รู้ว่าเป็นตัวที่ก๊อปมา
+              if (activeMainTab === 'admin') copiedData.email = `${copiedData.email}-copy`;
+              else if (copiedData.codeName) copiedData.codeName = `${copiedData.codeName}-copy`;
+              else if (copiedData.name) copiedData.name = `${copiedData.name} (Copy)`;
+              
+              setFormData(copiedData);
+              setModalMode('create'); // เด้งไปหน้า Form
+              return; // หยุดการทำงานแค่นี้ ไม่ต้องไปรันโค้ดปิดหน้าต่างด้านล่าง
 
-    // ----- ระบบลบข้อมูล (Delete) -----
-    if (modalMode === 'delete') {
-        if (targetCollection) {
-            try {
-                await deleteDoc(doc(db, targetCollection, selectedItem.id.toString()));
-                setData(prev => prev.filter(i => i.id !== selectedItem.id));
-            } catch (error) {
-                console.error("Delete Error: ", error); alert("ลบข้อมูลไม่สำเร็จ");
-            }
-        } else {
-            setData(prev => prev.filter(i => i.id !== selectedItem.id));
-        }
-        
-    // ----- ระบบคัดลอก (Copy) - เก็บลงเครื่องชั่วคราว รอผู้ใช้กดเซฟ -----
-    } else if (modalMode === 'copy') {
-        const newItem = {
-            ...selectedItem,
-            id: Date.now(),
-            codeName: selectedItem.codeName ? `${selectedItem.codeName}-COPY` : undefined,
-            name: selectedItem.name ? `${selectedItem.name} (Copy)` : undefined,
-            createdBy: 'System', createdDate: getDateTime(), lastModifiedBy: 'System', lastModifiedDate: getDateTime(),
-        };
-        setData(prev => [...prev, newItem]);
+          // ----- 3. ยืนยันจะแก้ไข (เปิดฟอร์ม Edit) -----
+          } else if (modalMode === 'confirmEdit') {
+              setFormData({ ...selectedItem }); 
+              setModalMode('edit'); 
+              return; // เด้งไปหน้า Form แล้วหยุดทำงานแค่นี้
 
-    } else if (modalMode === 'confirmEdit') {
-        setFormData({ ...selectedItem }); setModalMode('edit'); return; 
+          // ----- 4. บันทึกข้อมูลใหม่ลง Database (Create) -----
+          } else if (modalMode === 'confirmSaveCreate' || modalMode === 'confirmSaveCustomerFromQuot') {
+              const newItemData = {
+                  ...formData,
+                  // บังคับอีเมลเป็นพิมพ์เล็กเสมอ
+                  ...(activeMainTab === 'admin' && formData.email ? { email: formData.email.toLowerCase() } : {}),
+                  createdBy: 'System', 
+                  createdDate: getDateTime(), 
+                  lastModifiedBy: 'System', 
+                  lastModifiedDate: getDateTime(),
+              };
 
-    // ----- ระบบสร้างข้อมูลใหม่ (Create) -----
-    } else if (modalMode === 'confirmSaveCreate' || modalMode === 'confirmSaveCustomerFromQuot') {
-        const newItemData = {
-            ...formData,
-            createdBy: 'System', createdDate: getDateTime(), lastModifiedBy: 'System', lastModifiedDate: getDateTime(),
-        };
+              if (targetCollection) {
+                  const docRef = await addDoc(collection(db, targetCollection), newItemData);
+                  const newRecord = { id: docRef.id, ...newItemData };
+                  setData(prev => [...prev, newRecord]);
+                  
+                  if (modalMode === 'confirmSaveCustomerFromQuot') {
+                      setCurrentQuot(prev => ({...prev, customerId: docRef.id}));
+                  }
+              }
+              
+              setModalMode(null);
+              setSelectedItem(null);
+              setFormData({});
 
-        if (targetCollection) {
-            try {
-                const docRef = await addDoc(collection(db, targetCollection), newItemData);
-                const newRecord = { id: docRef.id, ...newItemData };
-                setData(prev => [...prev, newRecord]);
-                
-                if (modalMode === 'confirmSaveCustomerFromQuot') {
-                    setCurrentQuot(prev => ({...prev, customerId: docRef.id}));
-                }
-            } catch (error) {
-                console.error("Create Error: ", error); alert("บันทึกข้อมูลไม่สำเร็จ");
-            }
-        } else {
-            const newItem = { id: Date.now(), ...newItemData };
-            setData(prev => [...prev, newItem]);
-        }
-
-    // ----- ระบบแก้ไขข้อมูล (Update) -----
-    } else if (modalMode === 'confirmSaveEdit') {
-        const updatedData = { ...formData, lastModifiedBy: 'System', lastModifiedDate: getDateTime() };
-
-        if (targetCollection) {
-            try {
-                const dataToUpdate = { ...updatedData };
-                delete dataToUpdate.id; // ห้ามส่ง ID ไปทับ
-                await updateDoc(doc(db, targetCollection, formData.id.toString()), dataToUpdate);
-                setData(prev => prev.map(item => item.id === formData.id ? updatedData : item));
-            } catch (error) {
-                console.error("Update Error: ", error); alert("แก้ไขข้อมูลไม่สำเร็จ");
-            }
-        } else {
-             setData(prev => prev.map(item => item.id === formData.id ? updatedData : item));
-        }
-    }
-
-    // ปิด Popup
-    setModalMode(null);
-    setSelectedItem(null);
-    if(modalMode.includes('Save')) setFormData({});
+          // ----- 5. บันทึกข้อมูลที่แก้ไขลง Database (Update) -----
+          } else if (modalMode === 'confirmSaveEdit') {
+              const updatedData = { 
+                  ...formData, 
+                  ...(activeMainTab === 'admin' && formData.email ? { email: formData.email.toLowerCase() } : {}),
+                  lastModifiedBy: 'System', 
+                  lastModifiedDate: getDateTime() 
+              };
+              
+              const dataToUpdate = { ...updatedData };
+              delete dataToUpdate.id; // ห้ามอัปเดตทับคอลัมน์ ID
+              
+              if (targetCollection) {
+                  await updateDoc(doc(db, targetCollection, formData.id.toString()), dataToUpdate);
+              }
+              setData(prev => prev.map(item => item.id === formData.id ? updatedData : item));
+              
+              setModalMode(null);
+              setSelectedItem(null);
+              setFormData({});
+          }
+      } catch (error) {
+          console.error("Action Error:", error);
+          alert("เกิดข้อผิดพลาดในการอัปเดตข้อมูล: " + error.message);
+      }
   };
 
   const handleCreateClick = () => {
@@ -881,15 +905,19 @@ export default function MainApp() {
   // --- Render Helpers ---
 
   const renderMainTabs = () => {
-      const tabs = [
-          { id: 'quotation', label: '1. ใบเสนอราคา', icon: FileInput },
-          { id: 'masterData', label: '2. Master Data', icon: Database },
-          { id: 'appSetting', label: '3. App Setting', icon: Settings },
-          { id: 'admin', label: '4. Admin', icon: Users },
-      ];
+      const tabs = [
+          { id: 'quotation', label: '1. ใบเสนอราคา', icon: FileInput },
+          { id: 'masterData', label: '2. Master Data', icon: Database },
+          { id: 'appSetting', label: '3. App Setting', icon: Settings },
+      ];
+      
+      // เงื่อนไข: ถ้าเป็น Level 1 หรือ Level 2 ถึงจะโชว์แท็บ Admin (Level 3 จะมองไม่เห็น)
+      if (userRole === 'Level 1' || userRole === 'Level 2') {
+          tabs.push({ id: 'admin', label: '4. Admin', icon: Users });
+      }
 
-      return (
-        <div className="w-full overflow-x-auto border-b border-gray-300 bg-white mb-4">
+      return (
+        <div className="w-full overflow-x-auto border-b border-gray-300 bg-white mb-4">
             <div className="flex min-w-max">
                 {tabs.map(tab => (
                     <button
@@ -1161,9 +1189,9 @@ export default function MainApp() {
             <tr className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider font-semibold">
               <th className="p-4 border-b">ชื่อรหัส</th>
               <th className="p-4 border-b">วัสดุ (Material)</th>
-              <th className="p-4 border-b">ขนาดกว้าง ({currentUnit})</th>
-              <th className="p-4 border-b">ขนาดยาว ({currentUnit})</th>
-              <th className="p-4 border-b text-right">ราคา/หน่วย</th>
+              <th className="p-4 border-b">ขนาดกว้าง (นิ้ว)</th>
+              <th className="p-4 border-b">ขนาดยาว (นิ้ว)</th>
+              <th className="p-4 border-b text-right">ราคา/ตร.นิ้ว</th>
               <th className="p-4 border-b text-right">MOQ</th>
               <th className="p-4 border-b">Supplier</th>
               <th className="p-4 border-b">Note</th>
@@ -1183,9 +1211,9 @@ export default function MainApp() {
                           {item.material}
                       </span>
                   </td>
-                  <td className="p-4 text-gray-700">Max {convertToDisplay(item.maxWidth, currentUnit)}</td>
-                  <td className="p-4 text-gray-700">Max {convertToDisplay(item.maxLength, currentUnit)}</td>
-                  <td className="p-4 text-right font-medium text-blue-600">{item.price ? parseFloat(item.price).toFixed(2) : '-'}</td>
+                  <td className="p-4 text-gray-700">Max {item.maxWidth || '-'}</td>
+                  <td className="p-4 text-gray-700">Max {item.maxLength || '-'}</td>
+                  <td className="p-4 text-right font-medium text-blue-600">{item.price ? parseFloat(item.price).toFixed(2) : '-'}</td>
                   <td className="p-4 text-right text-gray-500">{item.moq}</td>
                   <td className="p-4 text-gray-700">
                       <div className="flex items-center gap-1"><Truck size={14} className="text-gray-400"/> {item.supplier}</div>
@@ -1290,9 +1318,9 @@ export default function MainApp() {
             <tr className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider font-semibold">
               <th className="p-4 border-b">ชื่อรหัส</th>
               <th className="p-4 border-b">ชื่อแบบ Global</th>
-              <th className="p-4 border-b">ขนาดกว้าง ({currentUnit})</th>
-              <th className="p-4 border-b">ขนาดยาว ({currentUnit})</th>
-              <th className="p-4 border-b text-right">ราคา/หน่วย</th>
+                <th className="p-4 border-b">ขนาดกว้าง (นิ้ว)</th>
+              <th className="p-4 border-b">ขนาดยาว (นิ้ว)</th>
+              <th className="p-4 border-b text-right">ราคา/ตร.นิ้ว</th>
               <th className="p-4 border-b text-right">MOQ</th>
               <th className="p-4 border-b">Supplier</th>
               <th className="p-4 border-b">Note</th>
@@ -1305,9 +1333,9 @@ export default function MainApp() {
                 <tr key={item.id} className="hover:bg-blue-50/30 transition-colors">
                   <td className="p-4 font-medium text-gray-900">{item.codeName}</td>
                   <td className="p-4 text-gray-600 max-w-xs truncate">{item.globalName}</td>
-                  <td className="p-4 text-gray-700">Max {convertToDisplay(item.maxWidth, currentUnit)}</td>
-                  <td className="p-4 text-gray-700">Max {convertToDisplay(item.maxLength, currentUnit)}</td>
-                  <td className="p-4 text-right font-medium text-blue-600">{item.price ? parseFloat(item.price).toFixed(2) : '-'}</td>
+                  <td className="p-4 text-gray-700">Max {item.maxWidth || '-'}</td>
+                  <td className="p-4 text-gray-700">Max {item.maxLength || '-'}</td>
+                  <td className="p-4 text-right font-medium text-blue-600">{item.price ? parseFloat(item.price).toFixed(2) : '-'}</td>
                   <td className="p-4 text-right text-gray-500">{item.moq}</td>
                   <td className="p-4 text-gray-700">
                       <div className="flex items-center gap-1"><Truck size={14} className="text-gray-400"/> {item.supplier}</div>
@@ -1608,14 +1636,15 @@ export default function MainApp() {
                                         </div>
                                     </div>
 
-                                    <InputGroup 
-                                        label="เลือกเกรดกระดาษ (Paper Type)" 
-                                        type="select" 
-                                        required
-                                        options={paperTypes.map(p => ({label: `${p.codeName} (${p.flute}-Flute) - ${p.price} B`, value: p.id}))}
-                                        value={currentQuot.paperTypeId}
-                                        onChange={(v) => setCurrentQuot({...currentQuot, paperTypeId: v})}
-                                    />
+                                <InputGroup 
+                                        label="เลือกเกรดกระดาษ (Paper Type)" 
+                                        type="select" 
+                                        required
+                                        /* เปลี่ยนคำลงท้ายให้ชัดเจนว่าเป็น ฿/ตร.ฟุต */
+                                        options={paperTypes.map(p => ({label: `${p.codeName} (${p.flute}-Flute) - ${p.price} ฿/ตร.ฟุต`, value: p.id}))}
+                                        value={currentQuot.paperTypeId}
+                                        onChange={(v) => setCurrentQuot({...currentQuot, paperTypeId: v})}
+                                    />
                                 </div>
 
                                 <div className="flex flex-col">
@@ -2138,91 +2167,138 @@ export default function MainApp() {
                 <InputGroup label="Note (หมายเหตุ)" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
             </>
         );
-    } else if (activeSubTab === 'paper') {
-        formContent = (
-            <>
-                <div className="grid grid-cols-2 gap-4">
-                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. P-KA125-B" />
-                    <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} placeholder="e.g. KA125/CA125 B-Flute" />
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                    <InputGroup label="ลอน (Flute)" type="select" options={['A','B','C','E','BC','CE']} value={formData.flute} onChange={(v) => setFormData({...formData, flute: v})} />
-                    <InputGroup label="ชั้นผนัง (Wall)" type="select" options={['Single Wall','Double Wall']} value={formData.wallType} onChange={(v) => setFormData({...formData, wallType: v})} />
-                    <InputGroup label="Material Code" type="select" options={['KA','KI','KS','CA','W']} value={formData.materialCode} onChange={(v) => setFormData({...formData, materialCode: v})} helpText="Code นี้จะถูกนำไปแสดงสี" />
-                </div>
-                <InputGroup label={`หน้ากว้างที่ผลิตได้ (${currentUnit})`} value={formData.widths} onChange={(v) => setFormData({...formData, widths: v})} placeholder={currentUnit === 'cm' ? "เช่น 120, 150" : "เช่น 48, 60"} />
-                <div className="grid grid-cols-3 gap-4">
-                    <InputGroup label="ราคาต่อหน่วย" type="number" value={formData.price} onChange={(v) => setFormData({...formData, price: v})} />
-                    <InputGroup label="MOQ (ขั้นต่ำ)" type="number" value={formData.moq} onChange={(v) => setFormData({...formData, moq: v})} />
-                    <InputGroup label="Supplier Name" value={formData.supplier} onChange={(v) => setFormData({...formData, supplier: v})} />
-                </div>
-                <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
-            </>
-        );
+    }  else if (activeSubTab === 'paper') {
+        formContent = (
+            <>
+                <div className="grid grid-cols-2 gap-4">
+                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. P-KA125-B" />
+                    <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} placeholder="e.g. KA125/CA125 B-Flute" />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                    <InputGroup label="ลอน (Flute)" type="select" options={['A','B','C','E','BC','CE']} value={formData.flute} onChange={(v) => setFormData({...formData, flute: v})} />
+                    <InputGroup label="ชั้นผนัง (Wall)" type="select" options={['Single Wall','Double Wall']} value={formData.wallType} onChange={(v) => setFormData({...formData, wallType: v})} />
+                </div>
+
+                {/* --- ระบบจานสี (Color Swatches) --- */}
+                <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200 shadow-sm">
+                    <label className="block text-sm font-bold text-gray-700 mb-3">เลือกสีกระดาษ (Material Code)</label>
+                    <div className="flex flex-wrap gap-3">
+                        {[
+                            { code: 'KA', name: 'น้ำตาลทอง', color: '#d4a373' },
+                            { code: 'KI', name: 'น้ำตาลอ่อน', color: '#e9d8a6' },
+                            { code: 'KS', name: 'ขาวนวล', color: '#fefae0' },
+                            { code: 'CA', name: 'น้ำตาลเข้ม', color: '#bc6c25' },
+                            { code: 'W', name: 'ขาวสว่าง', color: '#ffffff' }
+                        ].map(mat => (
+                            <button
+                                key={mat.code}
+                                type="button"
+                                onClick={() => setFormData({...formData, materialCode: mat.code})}
+                                className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-all ${
+                                    formData.materialCode === mat.code 
+                                    ? 'border-blue-500 bg-blue-50 shadow-md scale-105' 
+                                    : 'border-gray-200 bg-white hover:bg-gray-100'
+                                }`}
+                            >
+                                <div className="w-5 h-5 rounded-full border shadow-sm" style={{backgroundColor: mat.color}}></div>
+                                <span className="text-sm font-semibold text-gray-700">{mat.code} <span className="text-xs font-normal text-gray-500">({mat.name})</span></span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                
+                <InputGroup 
+                    label="หน้ากว้างที่ผลิตได้ (หน่วย: นิ้ว)" 
+                    value={formData.widths} 
+                    onChange={(v) => setFormData({...formData, widths: v})} 
+                    placeholder="เช่น 48, 60" 
+                    helpText="ระบุหน้ากว้างเป็นนิ้วเสมอ (คั่นด้วยลูกน้ำ)"
+                />
+                
+                <div className="grid grid-cols-3 gap-4">
+                    <InputGroup 
+                        label="ราคาต่อตารางฟุต (Sq.ft)" 
+                        type="number" 
+                        value={formData.price} 
+                        onChange={(v) => setFormData({...formData, price: v})} 
+                        placeholder="0.00"
+                    />
+                    <InputGroup label="MOQ (ขั้นต่ำ)" type="number" value={formData.moq} onChange={(v) => setFormData({...formData, moq: v})} />
+                    <InputGroup label="Supplier Name" value={formData.supplier} onChange={(v) => setFormData({...formData, supplier: v})} />
+                </div>
+                <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
+            </>
+        );
+    
     } else if (activeSubTab === 'printBlock') {
-        formContent = (
-            <>
-                <div className="grid grid-cols-2 gap-4">
-                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. BLK-001" />
-                    <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} />
-                </div>
-                <InputGroup label="วัสดุ (Material)" type="select" options={['บล็อคแกะ (Rubber)', 'บล็อคหล่อ (Polymer)']} value={formData.material} onChange={(v) => setFormData({...formData, material: v})} />
-                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded mb-4 border border-gray-100">
-                    <InputGroup label={`ขนาดความกว้างไม่เกิน (${currentUnit})`} type="number" value={formData.maxWidth} onChange={(v) => setFormData({...formData, maxWidth: v})} />
-                     <InputGroup label={`ขนาดความยาวไม่เกิน (${currentUnit})`} type="number" value={formData.maxLength} onChange={(v) => setFormData({...formData, maxLength: v})} />
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                    <InputGroup label="ราคาต่อหน่วย" type="number" value={formData.price} onChange={(v) => setFormData({...formData, price: v})} />
-                    <InputGroup label="MOQ (ขั้นต่ำ)" type="number" value={formData.moq} onChange={(v) => setFormData({...formData, moq: v})} />
-                    <InputGroup label="Supplier Name" value={formData.supplier} onChange={(v) => setFormData({...formData, supplier: v})} />
-                </div>
-                <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
-            </>
-        );
-    } else if (activeSubTab === 'printColor') {
-        formContent = (
-            <>
-                <div className="grid grid-cols-2 gap-4">
-                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. INK-001" />
-                    <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} placeholder="e.g. Pantone 485C" />
-                </div>
-                <div className="p-4 bg-gray-50 border rounded-lg mb-4 flex gap-6 items-start">
-                    <div className="flex-1">
-                         <InputGroup label="C,L,M, V Code (Hex/Color)" type="color" value={formData.clmvCode} onChange={(v) => setFormData({...formData, clmvCode: v})} />
-                    </div>
-                    <div className="flex flex-col items-center">
-                        <label className="text-sm text-gray-500 mb-2">Color Preview</label>
-                        <div className="w-16 h-16 rounded-lg border-2 border-gray-200 shadow-sm" style={{backgroundColor: formData.clmvCode}}></div>
-                    </div>
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                    <InputGroup label="ราคาต่อหน่วย" type="number" value={formData.price} onChange={(v) => setFormData({...formData, price: v})} />
-                    <InputGroup label="MOQ (ลิตร)" type="number" value={formData.moq} onChange={(v) => setFormData({...formData, moq: v})} />
-                    <InputGroup label="Supplier Name" value={formData.supplier} onChange={(v) => setFormData({...formData, supplier: v})} />
-                </div>
-                <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
-            </>
-        );
-    } else if (activeSubTab === 'dieCut') {
-        formContent = (
-            <>
-                <div className="grid grid-cols-2 gap-4">
-                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. DIE-001" />
-                    <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} />
-                </div>
-                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded mb-4 border border-gray-100">
-                    <InputGroup label={`ขนาดความกว้างไม่เกิน (${currentUnit})`} type="number" value={formData.maxWidth} onChange={(v) => setFormData({...formData, maxWidth: v})} />
-                     <InputGroup label={`ขนาดความยาวไม่เกิน (${currentUnit})`} type="number" value={formData.maxLength} onChange={(v) => setFormData({...formData, maxLength: v})} />
-                </div>
-                <div className="grid grid-cols-3 gap-4">
-                    <InputGroup label="ราคาต่อหน่วย" type="number" value={formData.price} onChange={(v) => setFormData({...formData, price: v})} />
-                    <InputGroup label="MOQ (ขั้นต่ำ)" type="number" value={formData.moq} onChange={(v) => setFormData({...formData, moq: v})} />
-                    <InputGroup label="Supplier Name" value={formData.supplier} onChange={(v) => setFormData({...formData, supplier: v})} />
-                </div>
-                <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
-            </>
-        );
-    }
+        formContent = (
+            <>
+                <div className="grid grid-cols-2 gap-4">
+                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. BLK-001" />
+                    <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} />
+                </div>
+                <InputGroup label="วัสดุ (Material)" type="select" options={['บล็อคแกะ (Rubber)', 'บล็อคหล่อ (Polymer)']} value={formData.material} onChange={(v) => setFormData({...formData, material: v})} />
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded mb-4 border border-gray-100">
+                    {/* เปลี่ยนบังคับเป็น นิ้ว */}
+                    <InputGroup label="ขนาดความกว้างไม่เกิน (นิ้ว)" type="number" value={formData.maxWidth} onChange={(v) => setFormData({...formData, maxWidth: v})} placeholder="เช่น 10" />
+                     <InputGroup label="ขนาดความยาวไม่เกิน (นิ้ว)" type="number" value={formData.maxLength} onChange={(v) => setFormData({...formData, maxLength: v})} placeholder="เช่น 20" />
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                    {/* เปลี่ยนราคาเป็นต่อ ตารางนิ้ว */}
+                    <InputGroup label="ราคาต่อตารางนิ้ว (Sq.inch)" type="number" value={formData.price} onChange={(v) => setFormData({...formData, price: v})} placeholder="0.00" />
+                    <InputGroup label="MOQ (ขั้นต่ำ)" type="number" value={formData.moq} onChange={(v) => setFormData({...formData, moq: v})} />
+                    <InputGroup label="Supplier Name" value={formData.supplier} onChange={(v) => setFormData({...formData, supplier: v})} />
+                </div>
+                <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
+            </>
+        );
+    } else if (activeSubTab === 'printColor') {
+        formContent = (
+            <>
+                <div className="grid grid-cols-2 gap-4">
+                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. INK-001" />
+                    <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} placeholder="e.g. Pantone 485C" />
+                </div>
+                <div className="p-4 bg-gray-50 border rounded-lg mb-4 flex gap-6 items-start">
+                    <div className="flex-1">
+                         <InputGroup label="C,L,M, V Code (Hex/Color)" type="color" value={formData.clmvCode} onChange={(v) => setFormData({...formData, clmvCode: v})} />
+                    </div>
+                    <div className="flex flex-col items-center">
+                        <label className="text-sm text-gray-500 mb-2">Color Preview</label>
+                        <div className="w-16 h-16 rounded-lg border-2 border-gray-200 shadow-sm" style={{backgroundColor: formData.clmvCode}}></div>
+                    </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                    <InputGroup label="ราคาต่อหน่วย" type="number" value={formData.price} onChange={(v) => setFormData({...formData, price: v})} />
+                    <InputGroup label="MOQ (ลิตร)" type="number" value={formData.moq} onChange={(v) => setFormData({...formData, moq: v})} />
+                    <InputGroup label="Supplier Name" value={formData.supplier} onChange={(v) => setFormData({...formData, supplier: v})} />
+                </div>
+                <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
+            </>
+        );
+    } else if (activeSubTab === 'dieCut') {
+        formContent = (
+            <>
+                <div className="grid grid-cols-2 gap-4">
+                    <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. DIE-001" />
+                    <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} />
+                </div>
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded mb-4 border border-gray-100">
+                    {/* เปลี่ยนบังคับเป็น นิ้ว */}
+                    <InputGroup label="ขนาดความกว้างไม่เกิน (นิ้ว)" type="number" value={formData.maxWidth} onChange={(v) => setFormData({...formData, maxWidth: v})} placeholder="เช่น 40" />
+                     <InputGroup label="ขนาดความยาวไม่เกิน (นิ้ว)" type="number" value={formData.maxLength} onChange={(v) => setFormData({...formData, maxLength: v})} placeholder="เช่น 60" />
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                    {/* เปลี่ยนราคาเป็นต่อ ตารางนิ้ว */}
+                    <InputGroup label="ราคาต่อตารางนิ้ว (Sq.inch)" type="number" value={formData.price} onChange={(v) => setFormData({...formData, price: v})} placeholder="0.00" />
+                    <InputGroup label="MOQ (ขั้นต่ำ)" type="number" value={formData.moq} onChange={(v) => setFormData({...formData, moq: v})} />
+                    <InputGroup label="Supplier Name" value={formData.supplier} onChange={(v) => setFormData({...formData, supplier: v})} />
+                </div>
+                <InputGroup label="Note" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
+            </>
+        );
+    }
 
     return (
       <Modal
