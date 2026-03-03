@@ -561,10 +561,14 @@ const fetchAllMasterData = async () => {
     };
 
     // 🌟 1. เพิ่มฟังก์ชันดึงข้อมูลใบเสนอราคาตรงนี้ 🌟
+// 🌟 1. ฟังก์ชันดึงข้อมูลใบเสนอราคา
     const fetchQuotations = async () => {
         try {
             const qSnap = await getDocs(collection(db, "quotations"));
-            const quots = qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            
+            // 👉 แก้บรรทัดนี้: สลับเอา ...doc.data() ขึ้นก่อน แล้วเอา id: doc.id ไว้ด้านหลังสุด
+            const quots = qSnap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+            
             // เรียงลำดับจากใหม่ไปเก่า
             quots.sort((a, b) => new Date(b.lastModifiedDate || b.createdDate || 0) < new Date(a.lastModifiedDate || a.createdDate || 0) ? 1 : -1);
             setQuotationList(quots);
@@ -594,6 +598,8 @@ const fetchAllMasterData = async () => {
   const [currentQuot, setCurrentQuot] = useState({
       customerId: '',
       customerName: '',
+      quotationNo: '', // <--- เพิ่มบรรทัดนี้
+      revision: 0,     // <--- เพิ่มบรรทัดนี้
       boxStyleId: '',
       paperTypeId: '',
       dimW: '',
@@ -847,6 +853,31 @@ const calculateTotals = () => {
       }
   };
 
+// --- ฟังก์ชันสร้างชื่อไฟล์สำหรับการ Export PDF (ตาม Format ใหม่) ---
+  const generateExportFileName = (quot) => {
+      // 1. ทำความสะอาดชื่อลูกค้า (ตัดอักขระพิเศษที่ห้ามใช้ในชื่อไฟล์ทิ้ง)
+      const rawCusName = customers.find(c => c.id === quot.customerId)?.name || 'UnknownCustomer';
+      const safeCusName = rawCusName.replace(/[\\/:*?"<>|]/g, '').trim();
+
+      // 2. หาวันที่สร้างเอกสาร (dd)
+      const cDate = quot.createdDate ? new Date(quot.createdDate.replace(' ', 'T')) : new Date();
+      const createDay = String(cDate.getDate()).padStart(2, '0');
+
+      // 3. หาวันที่แก้ไขล่าสุด (DDMMMYYYYhhmm)
+      const mDate = quot.lastModifiedDate ? new Date(quot.lastModifiedDate.replace(' ', 'T')) : new Date();
+      const editDD = String(mDate.getDate()).padStart(2, '0');
+      const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+      const editMMM = months[mDate.getMonth()]; // เป็นตัวพิมพ์ใหญ่เสมอ
+      const editYYYY = mDate.getFullYear();
+      const editHH = String(mDate.getHours()).padStart(2, '0');
+      const editMin = String(mDate.getMinutes()).padStart(2, '0');
+
+      const lastEditStr = `${editDD}${editMMM}${editYYYY}${editHH}${editMin}`;
+
+      // ผลลัพธ์: AIPD_QUOTATION_ชื่อลูกค้า_ddDDMMMYYYYhhmm
+      return `AIPD_QUOTATION_${safeCusName}_${createDay}${lastEditStr}.pdf`; // เติม .pdf เผื่อไว้
+  };
+
 
 // --- ฟังก์ชันดาวน์โหลด PDF (ฉบับคำนวณใหม่ป้องกันค่าศูนย์) ---
   const handleDownloadPDF = (quot) => {
@@ -925,14 +956,16 @@ const calculateTotals = () => {
           netTotal,
           pricePerBox
       };
-
+      // 🌟 สร้างชื่อไฟล์จากฟังก์ชันใหม่
+      const exportFileName = generateExportFileName(quot);
       // 3. ส่งข้อมูลไปสร้าง PDF
       generateQuotationPDF(
           quot, 
           companyData, 
           calculatedTotals, 
           { boxName: boxStyle?.codeName, paperName: paper?.codeName },
-          customerFull 
+          customerFull ,
+          exportFileName // <--- ส่งตัวแปรชื่อไฟล์แถมไปให้ไฟล์บริการ PDF ด้วย
       );
   };
 
@@ -946,10 +979,10 @@ const calculateTotals = () => {
   const handleCreateNewQuot = () => {
       // ล้างค่าเดิมทั้งหมดเตรียมกรอกใหม่
       setCurrentQuot({
-          id: null, customerId: '', customerName: '', boxStyleId: '', paperTypeId: '',
+          id: null, customerId: '', customerName: '',quotationNo: '',revision: 0, boxStyleId: '', paperTypeId: '',
           dimW: '', dimD: '', dimH: '', dimG: '3', dimM: '0.5',
           printType: 'none', printColorId1: '', printColorId2: '', printBlocks1: [], printBlocks2: [], printCostPerBox: 0,
-          dieCutId: '', dieCutW: '', dieCutL: '',
+          dieCutId: '', dieCutW: '', dieCutL: '',quotationNo: '', revision: 0,
           quantity: 1000, leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMargin: 20, discount: 0,
       });
       setQuotationView('create'); // สลับไปหน้าฟอร์ม
@@ -1707,46 +1740,67 @@ const handleConfirmAction = async () => {
       </div>
     </div>
   );
-  // --- ฟังก์ชันบันทึกใบเสนอราคาลง Database ---
+
 // --- ฟังก์ชันบันทึกใบเสนอราคาลง Database ---
   const handleSaveQuotation = async () => {
       try {
-          // ตรวจสอบข้อมูลเบื้องต้น
           if (!currentQuot.customerId || !currentQuot.boxStyleId || !currentQuot.paperTypeId) {
               alert("กรุณาเลือก ลูกค้า, รูปแบบกล่อง และ เกรดกระดาษ ให้ครบถ้วนก่อนบันทึก");
               return;
           }
 
-          // ข้อมูลที่ต้องการเซฟ
-          const quotDataToSave = {
-              ...currentQuot,
-              lastModifiedBy: userEmail,
-              lastModifiedDate: getDateTime(),
-          };
+          const now = new Date();
+          const currentDateStr = getDateTime();
 
-          if (currentQuot.id) {
-              // กรณีแก้ไข (Update ทับข้อมูลเดิม)
-              const dataToUpdate = { ...quotDataToSave };
-              delete dataToUpdate.id; 
-              await updateDoc(doc(db, "quotations", currentQuot.id), dataToUpdate);
-              alert("✅ อัปเดตข้อมูลใบเสนอราคาสำเร็จ!");
+          // 1. เช็คว่าเป็นสร้างใหม่ หรือ แก้ไข
+          const isEditing = !!currentQuot.id; // ถ้ามี ID จริงๆ แปลว่า Edit
+          const currentRev = currentQuot.revision ? parseInt(currentQuot.revision) : 0;
+          const nextRevision = isEditing ? currentRev + 1 : 0; // แก้ไขให้บวก 1
+
+          // 2. จัดการวันที่เพื่อสร้างเลขที่เอกสาร (ยึดตามวันเวลาที่สร้างครั้งแรกเสมอ)
+          // ถ้ามี createdDate เดิมให้ใช้ของเดิม ถ้าไม่มีแปลว่าเพิ่งสร้าง ให้ใช้เวลาปัจจุบัน
+          const baseDateStr = currentQuot.createdDate ? currentQuot.createdDate : currentDateStr;
+          
+          // แยกวันที่และเวลาออกจากรูปแบบ "YYYY-MM-DD HH:mm" แบบตรงๆ (เพื่อป้องกันเบราว์เซอร์แปลงเวลาเพี้ยน)
+          const [datePart, timePart] = baseDateStr.split(' ');
+          const [yyyy, mm, dd] = datePart.split('-');
+          const [hh, min] = timePart.split(':');
+          
+          const yy = yyyy.slice(-2); // ดึงปีมาแค่ 2 หลักท้าย (เช่น 2026 เป็น 26)
+          const revStr = String(nextRevision).padStart(2, '0'); // แปลง Revision ให้เป็น 2 หลัก
+          
+          // ประกอบร่างใหม่เป็น Format: AIPQ_DDMMYYhhmm_Sxx
+          const newQuotNo = `AIPQ_${dd}${mm}${yy}${hh}${min}_S${revStr}`;
+
+          // 3. เตรียมข้อมูลเซฟ 
+          const dataToSave = { ...currentQuot };
+          delete dataToSave.id; // 🌟 สำคัญมาก: ลบ id ออก เพื่อไม่ให้เซฟค่า null ลง Database
+          
+          dataToSave.quotationNo = newQuotNo;
+          dataToSave.revision = nextRevision;
+          dataToSave.lastModifiedBy = userEmail;
+          dataToSave.lastModifiedDate = currentDateStr;
+
+          if (isEditing) {
+              // Update 
+              await updateDoc(doc(db, "quotations", currentQuot.id), dataToSave);
+              alert(`✅ อัปเดตข้อมูลสำเร็จ! (เลขที่อ้างอิง: ${newQuotNo})`);
           } else {
-              // กรณีสร้างใหม่ (Create)
-              quotDataToSave.quotationNo = `QT-${new Date().getTime()}`;
-              quotDataToSave.createdBy = userEmail;
-              quotDataToSave.createdDate = getDateTime();
-              quotDataToSave.status = '0.แบบร่าง'; // ตั้งค่าเริ่มต้นเป็นแบบร่าง
-              await addDoc(collection(db, "quotations"), quotDataToSave);
-              alert("✅ บันทึกใบเสนอราคาใหม่สำเร็จ!");
+              // Create
+              dataToSave.createdBy = userEmail;
+              dataToSave.createdDate = currentDateStr;
+              dataToSave.status = '0.แบบร่าง';
+              await addDoc(collection(db, "quotations"), dataToSave);
+              alert(`✅ บันทึกใบเสนอราคาใหม่สำเร็จ! (เลขที่อ้างอิง: ${newQuotNo})`);
           }
           
-          // โหลดข้อมูลล่าสุดมาอัปเดตตาราง
+          // โหลดข้อมูลอัปเดตตารางใหม่ 
           const qSnap = await getDocs(collection(db, "quotations"));
-          const quots = qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          // 🌟 บังคับเอา id: doc.id ไว้ด้านหลัง เพื่อทับค่า null ที่อาจจะหลงเหลืออยู่ในใบเก่าๆ
+          const quots = qSnap.docs.map(doc => ({ ...doc.data(), id: doc.id })); 
           quots.sort((a, b) => new Date(b.lastModifiedDate || b.createdDate) < new Date(a.lastModifiedDate || a.createdDate) ? 1 : -1);
           setQuotationList(quots);
           
-          // เปลี่ยนหน้าจอกลับไปที่ Dashboard ตาราง
           setQuotationView('list');
       } catch (error) {
           console.error("Save Quotation Error:", error);
@@ -2005,7 +2059,7 @@ const handleConfirmAction = async () => {
                                         <span className="text-xs text-blue-400">×</span> 
                                         <span>{printBlocks.find(pb => pb.id.toString() === b.typeId)?.price || 0} <span className="text-xs text-gray-500">฿/ตร.นิ้ว</span></span>
                                         <span className="text-blue-400">=</span> 
-                                        <span className="font-bold text-gray-900 text-base">{(parseFloat(b.price) || 0).toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                        <span className="font-bold text-gray-900 text-base">{(parseFloat(b.price) || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
                                     </div>
                                 ) : null}
                             </div>
@@ -2020,9 +2074,18 @@ const handleConfirmAction = async () => {
                 {/* Header */}
                 <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-xl sticky top-0 z-40 shadow-sm">
                     <div className="flex items-center gap-3">
-                        <button onClick={() => setQuotationView('list')} className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-gray-200">
-                            <ChevronLeft size={20} className="text-gray-600" />
-                        </button>
+                        {/* ปุ่มย้อนกลับที่เพิ่มระบบถามยืนยันแล้ว */}
+                        <button 
+                            onClick={() => {
+                                if(window.confirm('คุณต้องการออกจากหน้านี้ใช่หรือไม่? ข้อมูลที่ยังไม่ได้บันทึกจะสูญหาย')) {
+                                    setQuotationView('list');
+                                }
+                            }} 
+                            className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-gray-200"
+                            title="กลับไปหน้ารายการ"
+                        >
+                            <ChevronLeft size={20} className="text-gray-600" />
+                        </button>
                         <div>
                             <h2 className="text-lg font-bold text-gray-800">สร้างใบเสนอราคาใหม่</h2>
                             <p className="text-xs text-gray-500">New Quotation Draft</p>
@@ -2339,7 +2402,7 @@ const handleConfirmAction = async () => {
                                         <span className="text-xs text-orange-400">×</span> 
                                         <span>{moldPrice} <span className="text-xs text-gray-500">฿/ตร.นิ้ว</span></span>
                                         <span className="text-orange-400">=</span> 
-                                        <span className="font-black text-lg text-orange-700">{total.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                        <span className="font-black text-lg text-orange-700">{total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
                                     </div>
                                 );
                             })()}
@@ -2456,7 +2519,7 @@ const handleConfirmAction = async () => {
                                                  <span className="font-semibold text-gray-800 block">A. กล่อง (Box)</span>
                                                  <span className="text-xs text-gray-400 pl-2 block">- ค่าสีต่อกล่อง ({totals.colorCostDetail.toFixed(2)})</span>
                                              </div>
-                                             <div className="font-medium">{(totals.boxCostA * currentQuot.quantity).toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</div>
+                                             <div className="font-medium">{(totals.boxCostA * currentQuot.quantity).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</div>
                                          </div>
 
                                          {/* B: Block Cost */}
@@ -2470,7 +2533,7 @@ const handleConfirmAction = async () => {
                                                      <span key={`2-${i}`} className="text-xs text-gray-400 pl-2 block">- สี 2: {b.price.toFixed(2)}</span>
                                                  ))}
                                              </div>
-                                             <div className="font-medium">{totals.blockCostB.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</div>
+                                             <div className="font-medium">{totals.blockCostB.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</div>
                                          </div>
 
                                          {/* C: Die Cut Cost */}
@@ -2495,27 +2558,27 @@ const handleConfirmAction = async () => {
                                      <div className="pt-4 border-t border-gray-200 space-y-2">
                                          <div className="flex justify-between text-sm text-gray-600">
                                              <span>รวมต้นทุน (A+B+C+Others)</span>
-                                             <span>{totals.grandTotalCost.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                             <span>{totals.grandTotalCost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
                                          </div>
                                          <div className="flex justify-between text-sm text-green-600">
                                              <span>+ กำไร ({currentQuot.profitMargin}%)</span>
-                                             <span>{(totals.totalWithProfit - totals.grandTotalCost).toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                             <span>{(totals.totalWithProfit - totals.grandTotalCost).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
                                          </div>
                                          <div className="flex justify-between text-sm text-red-500">
                                              <span>- ส่วนลด ({currentQuot.discount}%)</span>
-                                             <span>{(totals.totalWithProfit - totals.totalAfterDiscount).toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                             <span>{(totals.totalWithProfit - totals.totalAfterDiscount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
                                          </div>
                                           <div className="flex justify-between text-sm font-bold text-gray-800 pt-2 border-t">
                                              <span>ยอดสุทธิ (ก่อน VAT)</span>
-                                             <span>{totals.totalAfterDiscount.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                             <span>{totals.totalAfterDiscount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
                                          </div>
                                          <div className="flex justify-between text-sm text-gray-500">
                                              <span>VAT 7%</span>
-                                             <span>{(totals.netTotal - totals.totalAfterDiscount).toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                             <span>{(totals.netTotal - totals.totalAfterDiscount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
                                          </div>
                                          <div className="bg-gray-800 text-white p-3 rounded-lg flex justify-between items-center mt-2">
                                              <span className="font-bold">Grand Total</span>
-                                             <span className="font-bold text-lg">{totals.netTotal.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                             <span className="font-bold text-lg">{totals.netTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
                                          </div>
                                      </div>
                                  </div>
