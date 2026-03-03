@@ -364,13 +364,14 @@ export default function MainApp({ userRole , userEmail}){
       taxId: '', phone: '',
       approverTH: '', approverEN: '',
       signatureUrl: '',
+      logoUrl: '', // <--- เพิ่มโลโก้ตรงนี้
       auditLogs: []
   };
   const [companyData, setCompanyData] = useState(defaultCompanyState);
   const [originalCompanyData, setOriginalCompanyData] = useState(defaultCompanyState);
   const [isEditingCompany, setIsEditingCompany] = useState(false);
   const [isUploadingSig, setIsUploadingSig] = useState(false);
-
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false); // <--- เพิ่ม State Loading สำหรับโลโก้
   // --- Data States ---
 
   // 1. Box Styles
@@ -547,18 +548,29 @@ const fetchAllMasterData = async () => {
         }
     };
 
-    // --- เพิ่มฟังก์ชันดึงข้อมูลบริษัท (แบบเจาะจง 1 ไฟล์) 👇 ---
     const fetchCompanyData = async () => {
         try {
             const docSnap = await getDoc(doc(db, "appSettings", "companyProfile"));
             if (docSnap.exists()) {
                 const data = docSnap.data();
                 setCompanyData(data);
-                setOriginalCompanyData(data); // เก็บต้นฉบับไว้เทียบตอนแก้
+                setOriginalCompanyData(data);
             }
         } catch (error) { console.error("โหลดข้อมูลบริษัทไม่สำเร็จ", error); }
     };
 
+    // 🌟 1. เพิ่มฟังก์ชันดึงข้อมูลใบเสนอราคาตรงนี้ 🌟
+    const fetchQuotations = async () => {
+        try {
+            const qSnap = await getDocs(collection(db, "quotations"));
+            const quots = qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // เรียงลำดับจากใหม่ไปเก่า
+            quots.sort((a, b) => new Date(b.lastModifiedDate || b.createdDate || 0) < new Date(a.lastModifiedDate || a.createdDate || 0) ? 1 : -1);
+            setQuotationList(quots);
+        } catch (error) { console.error("โหลดข้อมูลใบเสนอราคาไม่สำเร็จ", error); }
+    };
+
+    // 🌟 2. สั่งให้โหลด fetchQuotations พร้อมกับ Master Data ตัวอื่นๆ 🌟
     await Promise.all([
         fetchCollection("customers", setCustomers),
         fetchCollection("boxStyles", setBoxStyles),
@@ -567,7 +579,8 @@ const fetchAllMasterData = async () => {
         fetchCollection("printColors", setPrintColors),
         fetchCollection("dieCutMolds", setDieCutMolds),
         fetchCollection("admins", setAdmins),
-        fetchCompanyData() // <--- สั่งดึงข้อมูลตรงนี้
+        fetchCompanyData(),
+        fetchQuotations() // <--- เติมตรงนี้เพื่อให้โหลดข้อมูลขึ้นตารางทันทีที่เปิดแอป
     ]);
   };
 
@@ -768,15 +781,18 @@ const calculateTotals = () => {
       return `${day}${months[d.getMonth()]}${d.getFullYear()}`;
   };
 
-  // --- ฟังก์ชันสร้างชื่อใบเสนอราคาอัตโนมัติ ---
+// --- ฟังก์ชันสร้างชื่อใบเสนอราคาอัตโนมัติ (แยกเป็น 2 บรรทัด) ---
   const generateQuotName = (quot) => {
       const cusName = customers.find(c => c.id === quot.customerId)?.name || 'ไม่ระบุลูกค้า';
       const boxName = boxStyles.find(b => b.id.toString() === quot.boxStyleId)?.codeName || 'ไม่ระบุกล่อง';
       const paperName = paperTypes.find(p => p.id.toString() === quot.paperTypeId)?.codeName || 'ไม่ระบุกระดาษ';
-      const qty = quot.quantity || 1;
       const date = formatQuotDateForName(quot.createdDate);
       
-      return `${cusName} - ${boxName} - ${paperName} - ${qty}ใบ - ${date}`;
+      // ส่งค่ากลับไปเป็น Object เพื่อให้ตารางเอาไปจัด 2 บรรทัดได้ง่ายๆ
+      return {
+          line1: `${cusName}`,
+          line2: `${boxName} - ${paperName} - ${date}`
+      };
   };
 
   // --- รายการสถานะของใบเสนอราคา ---
@@ -788,8 +804,23 @@ const calculateTotals = () => {
       "3.2 ปิดรายการ"
   ];
 
-  // --- ฟังก์ชันเปลี่ยนสถานะ (Update Status) ผ่านตาราง ---
-  const handleStatusChange = async (id, newStatus) => {
+// --- ฟังก์ชันเปลี่ยนสถานะ (Update Status) ผ่านตาราง ---
+  const handleStatusChange = async (id, newStatus, currentStatus) => {
+      // 1. เช็คสิทธิ์: ถ้าจะเปลี่ยนเป็น '2' หรือ '3.1' ต้องเป็น Level 1 หรือ 2 เท่านั้น
+      if (newStatus.startsWith('2') || newStatus.startsWith('3.1')) {
+          if (userRole !== 'Level 1' && userRole !== 'Level 2') {
+              alert("⚠️ ปฏิเสธการทำรายการ: เฉพาะ Admin (Level 1, 2) เท่านั้นที่สามารถอนุมัติ 'พร้อมเสนอลูกค้า' หรือ 'สั่งผลิต' ได้");
+              return; // หยุดการทำงานทันที
+          }
+      }
+
+      // 2. เด้งหน้าต่างยืนยัน (Confirmation)
+      const confirmMsg = `คุณต้องการเปลี่ยนสถานะใบเสนอราคานี้เป็น "${newStatus}" ใช่หรือไม่?`;
+      if (!window.confirm(confirmMsg)) {
+          return; // ถ้ากดยกเลิก ให้หยุดทำงาน (Dropdown จะเด้งกลับไปค่าเดิมอัตโนมัติ)
+      }
+
+      // 3. ถ้ากดยืนยัน และสิทธิ์ผ่าน ให้บันทึกข้อมูล
       try {
           await updateDoc(doc(db, "quotations", id), {
               status: newStatus,
@@ -815,11 +846,24 @@ const calculateTotals = () => {
       }
   };
 
-  // --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
+
+// --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
   const handleEditQuotation = (quot) => {
       setCurrentQuot(quot);
-      // *** หมายเหตุ: ถ้าคุณมี State สำหรับสลับหน้า (เช่น setIsCreating(true)) ให้เรียกตรงนี้ด้วยครับ ***
-      // เช่น setIsCreating(true); หรือ setActiveTab('quotationForm');
+      setQuotationView('create'); // สลับไปหน้าฟอร์ม
+  };
+
+  // --- ฟังก์ชันกดสร้างใบเสนอราคาใหม่ ---
+  const handleCreateNewQuot = () => {
+      // ล้างค่าเดิมทั้งหมดเตรียมกรอกใหม่
+      setCurrentQuot({
+          id: null, customerId: '', customerName: '', boxStyleId: '', paperTypeId: '',
+          dimW: '', dimD: '', dimH: '', dimG: '3', dimM: '0.5',
+          printType: 'none', printColorId1: '', printColorId2: '', printBlocks1: [], printBlocks2: [], printCostPerBox: 0,
+          dieCutId: '', dieCutW: '', dieCutL: '',
+          quantity: 1000, leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMargin: 20, discount: 0,
+      });
+      setQuotationView('create'); // สลับไปหน้าฟอร์ม
   };
 
   // --- Actions ---
@@ -1003,9 +1047,9 @@ const handleConfirmAction = async () => {
       }
   };
 // --- ลอจิกจัดการข้อมูลบริษัท (App Settings) ---
+// --- App Settings Handlers ---
   const handleUploadSignature = async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
+      const file = e.target.files[0]; if (!file) return;
       setIsUploadingSig(true);
       try {
           const storageRef = ref(storage, `signatures/sig_${Date.now()}_${file.name}`);
@@ -1016,7 +1060,20 @@ const handleConfirmAction = async () => {
       finally { setIsUploadingSig(false); }
   };
 
-const handleSaveCompanyData = async () => {
+  // --- เพิ่มฟังก์ชันอัปโหลดโลโก้ ---
+  const handleUploadLogo = async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      setIsUploadingLogo(true);
+      try {
+          const storageRef = ref(storage, `logos/logo_${Date.now()}_${file.name}`);
+          await uploadBytes(storageRef, file);
+          const url = await getDownloadURL(storageRef);
+          setCompanyData(prev => ({ ...prev, logoUrl: url }));
+      } catch (error) { alert("อัปโหลดโลโก้ไม่สำเร็จ"); }
+      finally { setIsUploadingLogo(false); }
+  };
+
+  const handleSaveCompanyData = async () => {
       try {
           const newLogs = [];
           const fieldsToTrack = [
@@ -1024,55 +1081,28 @@ const handleSaveCompanyData = async () => {
               { key: 'addressTH', label: 'ที่อยู่ (TH)' }, { key: 'addressEN', label: 'ที่อยู่ (EN)' },
               { key: 'taxId', label: 'เลขประจำตัวผู้เสียภาษี' }, { key: 'phone', label: 'เบอร์โทรศัพท์' },
               { key: 'approverTH', label: 'ผู้อนุมัติ (TH)' }, { key: 'approverEN', label: 'ผู้อนุมัติ (EN)' },
-              { key: 'signatureUrl', label: 'รูปลายเซ็น' }
+              { key: 'signatureUrl', label: 'รูปลายเซ็น' }, 
+              { key: 'logoUrl', label: 'โลโก้บริษัท' } // <--- เพิ่มโลโก้เข้า Log
           ];
 
           fieldsToTrack.forEach(field => {
               const oldVal = originalCompanyData[field.key] || '';
               const newVal = companyData[field.key] || '';
-              
-              if (oldVal !== newVal) {
-                  newLogs.push({
-                      fieldName: field.label,
-                      oldValue: oldVal || '-',
-                      newValue: newVal || '-',
-                      modifiedBy: userEmail || 'Admin', // ป้องกัน Error หากดึง Email ไม่มา
-                      modifiedAt: getDateTime()
-                  });
-              }
+              if (oldVal !== newVal) newLogs.push({ fieldName: field.label, oldValue: oldVal || '-', newValue: newVal || '-', modifiedBy: userEmail || 'Admin', modifiedAt: getDateTime() });
           });
 
-          const updatedLogs = newLogs.length > 0 
-              ? [...newLogs, ...(originalCompanyData.auditLogs || [])] 
-              : (originalCompanyData.auditLogs || []);
-
-          // แพ็คข้อมูลใหม่ทั้งหมด (ถ้าช่องไหนไม่ได้กรอก ให้เป็นค่าว่าง '' แทน undefined)
+          const updatedLogs = newLogs.length > 0 ? [...newLogs, ...(originalCompanyData.auditLogs || [])] : (originalCompanyData.auditLogs || []);
           const finalDataToSave = { 
-              nameTH: companyData.nameTH || '', 
-              nameEN: companyData.nameEN || '',
-              addressTH: companyData.addressTH || '', 
-              addressEN: companyData.addressEN || '',
-              taxId: companyData.taxId || '', 
-              phone: companyData.phone || '',
-              approverTH: companyData.approverTH || '', 
-              approverEN: companyData.approverEN || '',
-              signatureUrl: companyData.signatureUrl || '',
+              nameTH: companyData.nameTH || '', nameEN: companyData.nameEN || '', addressTH: companyData.addressTH || '', addressEN: companyData.addressEN || '',
+              taxId: companyData.taxId || '', phone: companyData.phone || '', approverTH: companyData.approverTH || '', approverEN: companyData.approverEN || '',
+              signatureUrl: companyData.signatureUrl || '', 
+              logoUrl: companyData.logoUrl || '', // <--- เซฟโลโก้ลงฐานข้อมูล
               auditLogs: updatedLogs 
           };
-
-          // บันทึกทับลงไปใน Document เดิม
           await setDoc(doc(db, "appSettings", "companyProfile"), finalDataToSave, { merge: true });
-          
-          setOriginalCompanyData(finalDataToSave);
-          setCompanyData(finalDataToSave);
-          setIsEditingCompany(false);
+          setOriginalCompanyData(finalDataToSave); setCompanyData(finalDataToSave); setIsEditingCompany(false);
           alert("บันทึกข้อมูลบริษัทและเก็บประวัติการแก้ไขเรียบร้อยแล้ว");
-          
-      } catch (error) {
-          console.error("Save Company Error:", error);
-          // อัปเดตให้แจ้งเตือนบอกด้วยว่า Error จากอะไร จะได้หาเป้าเจอครับ
-          alert("บันทึกข้อมูลไม่สำเร็จ: " + error.message); 
-      }
+      } catch (error) { alert("บันทึกข้อมูลไม่สำเร็จ: " + error.message); }
   };
   // --- Render Helpers ---
 
@@ -1589,6 +1619,7 @@ const handleSaveCompanyData = async () => {
     </div>
   );
   // --- ฟังก์ชันบันทึกใบเสนอราคาลง Database ---
+// --- ฟังก์ชันบันทึกใบเสนอราคาลง Database ---
   const handleSaveQuotation = async () => {
       try {
           // ตรวจสอบข้อมูลเบื้องต้น
@@ -1597,20 +1628,37 @@ const handleSaveCompanyData = async () => {
               return;
           }
 
+          // ข้อมูลที่ต้องการเซฟ
           const quotDataToSave = {
               ...currentQuot,
-              quotationNo: `QT-${new Date().getTime()}`, // รันรหัสใบเสนอราคาเบื้องต้น
-              createdBy: userEmail,
-              createdDate: getDateTime(),
-              status: 'Saved'
+              lastModifiedBy: userEmail,
+              lastModifiedDate: getDateTime(),
           };
+
+          if (currentQuot.id) {
+              // กรณีแก้ไข (Update ทับข้อมูลเดิม)
+              const dataToUpdate = { ...quotDataToSave };
+              delete dataToUpdate.id; 
+              await updateDoc(doc(db, "quotations", currentQuot.id), dataToUpdate);
+              alert("✅ อัปเดตข้อมูลใบเสนอราคาสำเร็จ!");
+          } else {
+              // กรณีสร้างใหม่ (Create)
+              quotDataToSave.quotationNo = `QT-${new Date().getTime()}`;
+              quotDataToSave.createdBy = userEmail;
+              quotDataToSave.createdDate = getDateTime();
+              quotDataToSave.status = '0.แบบร่าง'; // ตั้งค่าเริ่มต้นเป็นแบบร่าง
+              await addDoc(collection(db, "quotations"), quotDataToSave);
+              alert("✅ บันทึกใบเสนอราคาใหม่สำเร็จ!");
+          }
           
-          // บันทึกลงตาราง quotations (Firebase)
-          await addDoc(collection(db, "quotations"), quotDataToSave);
-          alert("✅ บันทึกใบเสนอราคาลงระบบสำเร็จ!");
+          // โหลดข้อมูลล่าสุดมาอัปเดตตาราง
+          const qSnap = await getDocs(collection(db, "quotations"));
+          const quots = qSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          quots.sort((a, b) => new Date(b.lastModifiedDate || b.createdDate) < new Date(a.lastModifiedDate || a.createdDate) ? 1 : -1);
+          setQuotationList(quots);
           
-          // ตัวเลือก: เคลียร์หน้าจอ หรือ พากลับไปหน้ารายการ
-          // setActiveMainTab('quotationList'); // (ถ้ามีหน้ารายการ)
+          // เปลี่ยนหน้าจอกลับไปที่ Dashboard ตาราง
+          setQuotationView('list');
       } catch (error) {
           console.error("Save Quotation Error:", error);
           alert("บันทึกไม่สำเร็จ: " + error.message);
@@ -1618,39 +1666,62 @@ const handleSaveCompanyData = async () => {
   };
   // NEW: Quotation Screen
   const renderQuotationScreen = () => {
-    // List View
-    if (quotationView === 'list') {
-        return (
-            <div className="space-y-6">
-                 {/* Dashboard Stats */}
-                 <div className="grid grid-cols-3 gap-6">
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 flex items-center justify-between">
-                         <div>
-                             <p className="text-sm text-gray-500 mb-1">ใบเสนอราคาเดือนนี้</p>
-                             <h3 className="text-2xl font-bold text-gray-800">12 ใบ</h3>
-                         </div>
-                         <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-600">
-                             <FileText size={24} />
-                         </div>
-                    </div>
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-green-100 flex items-center justify-between">
-                         <div>
-                             <p className="text-sm text-gray-500 mb-1">ยอดอนุมัติแล้ว</p>
-                             <h3 className="text-2xl font-bold text-gray-800">5 ใบ</h3>
-                         </div>
-                         <div className="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center text-green-600">
-                             <CheckCircle size={24} />
-                         </div>
-                    </div>
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-50 transition-all group" onClick={() => setQuotationView('create')}>
-                         <div className="text-center">
-                             <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white mx-auto mb-2 shadow-md group-hover:scale-110 transition-transform">
-                                 <Plus size={24} />
-                             </div>
-                             <h3 className="font-semibold text-blue-600">สร้างใบเสนอราคาใหม่</h3>
-                         </div>
-                    </div>
-                 </div>
+    if (quotationView === 'list') {
+        
+        // --- 📊 ส่วนคำนวณตัวเลข Dashboard ---
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        // 1. นับจำนวนใบที่ "ยังไม่ปิดรายการ" และอยู่ในช่วง "30 วันล่าสุด"
+        const activeLast30DaysCount = quotationList.filter(q => {
+            const isNotClosed = !q.status?.includes('3.2'); // ไม่ใช่สถานะปิดรายการ
+            if (!q.createdDate) return false;
+            
+            // แปลงรูปแบบวันที่เพื่อให้คำนวณได้ชัวร์ๆ (รองรับ Safari/iOS)
+            const qDate = new Date(q.createdDate.replace(' ', 'T')); 
+            return isNotClosed && (qDate >= thirtyDaysAgo);
+        }).length;
+
+        // 2. นับจำนวนใบที่มีสถานะ "1.รอการตรวจสอบ"
+        const pendingReviewCount = quotationList.filter(q => q.status?.includes('1.รอการตรวจสอบ')).length;
+
+        return (
+            <div className="space-y-6">
+                 {/* Dashboard Stats */}
+                 <div className="grid grid-cols-3 gap-6">
+                    
+                    {/* กล่อง 1: งานที่ยังไม่ปิด (30 วันย้อนหลัง) */}
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 flex items-center justify-between">
+                         <div>
+                             <p className="text-sm font-semibold text-gray-500 mb-1">งานเปิดอยู่ (30 วันล่าสุด)</p>
+                             <h3 className="text-2xl font-bold text-gray-800">{activeLast30DaysCount} <span className="text-lg font-normal">ใบ</span></h3>
+                         </div>
+                         <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-600">
+                             <FileText size={24} />
+                         </div>
+                    </div>
+
+                    {/* กล่อง 2: รอการตรวจสอบ */}
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-yellow-200 flex items-center justify-between">
+                         <div>
+                             <p className="text-sm font-semibold text-gray-500 mb-1">รอการตรวจสอบ</p>
+                             <h3 className="text-2xl font-bold text-gray-800">{pendingReviewCount} <span className="text-lg font-normal">ใบ</span></h3>
+                         </div>
+                         <div className="w-12 h-12 bg-yellow-50 rounded-full flex items-center justify-center text-yellow-600 shadow-sm border border-yellow-100">
+                             <AlertCircle size={24} />
+                         </div>
+                    </div>
+
+                    {/* กล่อง 3: สร้างใบเสนอราคาใหม่ (คงเดิม) */}
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center justify-center cursor-pointer hover:bg-gray-50 transition-all group" onClick={handleCreateNewQuot}>
+                         <div className="text-center">
+                             <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white mx-auto mb-2 shadow-md group-hover:scale-110 transition-transform">
+                                 <Plus size={24} />
+                             </div>
+                             <h3 className="font-semibold text-blue-600">สร้างใบเสนอราคาใหม่</h3>
+                         </div>
+                    </div>
+                 </div>
 
                  {/* Recent List */}
                  {/* ตารางรายการใบเสนอราคาล่าสุด (Quotation Dashboard) */}
@@ -1667,6 +1738,7 @@ const handleSaveCompanyData = async () => {
                         <thead className="bg-white sticky top-0 shadow-sm z-10">
                             <tr className="text-gray-500 text-xs uppercase tracking-wider bg-gray-50">
                                 <th className="p-4 border-b">ชื่อใบเสนอราคา</th>
+                                <th className="p-4 border-b text-right">จำนวน (ใบ)</th>
                                 <th className="p-4 border-b w-40">สถานะ (Status)</th>
                                 <th className="p-4 border-b">สร้างโดย</th>
                                 <th className="p-4 border-b">แก้ไขโดย</th>
@@ -1678,22 +1750,27 @@ const handleSaveCompanyData = async () => {
                         <tbody className="divide-y divide-gray-100">
                             {(!quotationList || quotationList.length === 0) ? (
                                 <tr>
-                                    <td colSpan="7" className="p-10 text-center text-gray-400">
-                                        <div className="flex flex-col items-center gap-2">
-                                            <FileText size={48} className="text-gray-200" />
-                                            <p>ยังไม่มีข้อมูลใบเสนอราคา</p>
-                                        </div>
+                                    <td colSpan="8" className="p-10 text-center text-gray-400">
+                                        <div className="flex flex-col items-center gap-2"><FileText size={48} className="text-gray-200" /><p>ยังไม่มีข้อมูลใบเสนอราคา</p></div>
                                     </td>
                                 </tr>
                             ) : (
-                                quotationList.map((quot) => (
+                                quotationList.map((quot) => {
+                                    const nameData = generateQuotName(quot); // เรียกใช้ฟังก์ชันชื่อ 2 บรรทัด
+                                    return (
                                     <tr key={quot.id} className="hover:bg-blue-50/30 transition-colors">
-                                        {/* ชื่อใบเสนอราคา (Auto Generate) */}
-                                        <td className="p-4 font-medium text-gray-800 max-w-[300px] truncate" title={generateQuotName(quot)}>
-                                            {generateQuotName(quot)}
-                                        </td>
                                         
-                                        {/* สถานะ (Dropdown เปลี่ยนสถานะได้ทันที) */}
+                                        {/* โชว์ชื่อ 2 บรรทัด */}
+                                        <td className="p-4 max-w-[250px]">
+                                            <div className="font-bold text-blue-800 truncate" title={nameData.line1}>{nameData.line1}</div>
+                                            <div className="text-xs text-gray-500 truncate mt-0.5" title={nameData.line2}>{nameData.line2}</div>
+                                        </td>
+
+                                        {/* คอลัมน์แยก: จำนวน */}
+                                        <td className="p-4 text-right font-bold text-gray-700">
+                                            {(quot.quantity || 0).toLocaleString()}
+                                        </td>
+
                                         <td className="p-4">
                                             <select 
                                                 className={`text-xs font-semibold py-1 px-2 rounded border cursor-pointer outline-none transition-colors
@@ -1701,46 +1778,26 @@ const handleSaveCompanyData = async () => {
                                                       quot.status?.startsWith('1') ? 'bg-yellow-100 text-yellow-700 border-yellow-200' : 
                                                       quot.status?.startsWith('2') ? 'bg-blue-100 text-blue-700 border-blue-200' : 
                                                       quot.status?.startsWith('3.1') ? 'bg-green-100 text-green-700 border-green-200' : 
-                                                      'bg-gray-800 text-white border-gray-700' // 3.2 ปิดรายการ
+                                                      'bg-gray-800 text-white border-gray-700'
                                                     }`}
                                                 value={quot.status || "0.แบบร่าง"}
-                                                onChange={(e) => handleStatusChange(quot.id, e.target.value)}
+                                                onChange={(e) => handleStatusChange(quot.id, e.target.value, quot.status)}
                                             >
-                                                {quotationStatuses.map(s => (
-                                                    <option key={s} value={s} className="bg-white text-gray-800">{s}</option>
-                                                ))}
+                                                {quotationStatuses.map(s => (<option key={s} value={s} className="bg-white text-gray-800">{s}</option>))}
                                             </select>
                                         </td>
-
-                                        {/* ข้อมูล Audit Log */}
-                                        <td className="p-4 text-gray-600">{quot.createdBy || '-'}</td>
-                                        <td className="p-4 text-gray-600">{quot.lastModifiedBy || '-'}</td>
-                                        
-                                        {/* เวลาสร้าง/แก้ไข (ใช้ split ตัดเอาแค่โซนเวลาให้ดูง่ายขึ้น) */}
+                                        <td className="p-4 text-gray-600 truncate max-w-[120px]" title={quot.createdBy}>{quot.createdBy || '-'}</td>
+                                        <td className="p-4 text-gray-600 truncate max-w-[120px]" title={quot.lastModifiedBy}>{quot.lastModifiedBy || '-'}</td>
                                         <td className="p-4 text-xs text-gray-500">{quot.createdDate ? quot.createdDate.split('.')[0].replace('T', ' ') : '-'}</td>
                                         <td className="p-4 text-xs text-gray-500">{quot.lastModifiedDate ? quot.lastModifiedDate.split('.')[0].replace('T', ' ') : '-'}</td>
-
-                                        {/* ปุ่มจัดการ Edit / Delete */}
                                         <td className="p-4 text-center">
                                             <div className="flex justify-center gap-2">
-                                                <button 
-                                                    onClick={() => handleEditQuotation(quot)}
-                                                    className="p-1.5 text-blue-500 hover:bg-blue-100 rounded transition-colors"
-                                                    title="แก้ไขใบเสนอราคา"
-                                                >
-                                                    <Edit size={16} />
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleDeleteQuotation(quot.id)}
-                                                    className="p-1.5 text-red-500 hover:bg-red-100 rounded transition-colors"
-                                                    title="ลบใบเสนอราคา"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
+                                                <button onClick={() => handleEditQuotation(quot)} className="p-1.5 text-blue-500 hover:bg-blue-100 rounded transition-colors" title="แก้ไขใบเสนอราคา"><Edit size={16} /></button>
+                                                <button onClick={() => handleDeleteQuotation(quot.id)} className="p-1.5 text-red-500 hover:bg-red-100 rounded transition-colors" title="ลบใบเสนอราคา"><Trash2 size={16} /></button>
                                             </div>
                                         </td>
                                     </tr>
-                                ))
+                                )})
                             )}
                         </tbody>
                     </table>
@@ -2895,21 +2952,35 @@ const handleSaveCompanyData = async () => {
                               </div>
 
                               {/* ลายเซ็น */}
-                              <div className="col-span-1 md:col-span-2 mt-4">
-                                  <label className="block text-sm font-medium text-gray-700 mb-2">รูปลายเซ็นผู้อนุมัติ (Signature Image)</label>
-                                  {isEditingCompany && (
-                                      <div className="mb-3">
-                                          <input type="file" accept="image/*" onChange={handleUploadSignature} className="text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer" />
-                                          {isUploadingSig && <span className="text-xs text-blue-500 animate-pulse ml-2">กำลังอัปโหลด...</span>}
-                                      </div>
-                                  )}
-                                  {companyData.signatureUrl ? (
-                                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 inline-block bg-white">
-                                          <img src={companyData.signatureUrl} alt="Signature" className="max-h-24 object-contain" />
-                                      </div>
-                                  ) : (
-                                      <div className="text-sm text-gray-400 italic">ยังไม่มีรูปภาพลายเซ็น</div>
-                                  )}
+                              {/* ลายเซ็น & โลโก้ */}
+                              <div className="col-span-1 md:col-span-2 mt-4 grid grid-cols-1 md:grid-cols-2 gap-8 border-t border-gray-100 pt-4">
+                                  
+                                  {/* ฝั่งซ้าย: ลายเซ็น */}
+                                  <div>
+                                      <label className="block text-sm font-bold text-gray-700 mb-2">รูปลายเซ็นผู้อนุมัติ (Signature Image)</label>
+                                      {isEditingCompany && (
+                                          <div className="mb-3"><input type="file" accept="image/*" onChange={handleUploadSignature} className="text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer" />{isUploadingSig && <span className="text-xs text-blue-500 animate-pulse ml-2">กำลังอัปโหลด...</span>}</div>
+                                      )}
+                                      {companyData.signatureUrl ? (
+                                          <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 inline-block bg-white shadow-sm hover:border-blue-300 transition-colors">
+                                              <img src={companyData.signatureUrl} alt="Signature" className="max-h-24 object-contain" />
+                                          </div>
+                                      ) : (<div className="text-sm text-gray-400 italic bg-gray-50 p-4 rounded border border-dashed">ยังไม่มีรูปภาพลายเซ็น</div>)}
+                                  </div>
+
+                                  {/* ฝั่งขวา: โลโก้บริษัท */}
+                                  <div>
+                                      <label className="block text-sm font-bold text-gray-700 mb-2">โลโก้บริษัท (Company Logo)</label>
+                                      {isEditingCompany && (
+                                          <div className="mb-3"><input type="file" accept="image/*" onChange={handleUploadLogo} className="text-sm file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100 cursor-pointer" />{isUploadingLogo && <span className="text-xs text-orange-500 animate-pulse ml-2">กำลังอัปโหลด...</span>}</div>
+                                      )}
+                                      {companyData.logoUrl ? (
+                                          <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 inline-block bg-white shadow-sm hover:border-orange-300 transition-colors">
+                                              <img src={companyData.logoUrl} alt="Company Logo" className="max-h-24 object-contain" />
+                                          </div>
+                                      ) : (<div className="text-sm text-gray-400 italic bg-gray-50 p-4 rounded border border-dashed">ยังไม่มีรูปภาพโลโก้</div>)}
+                                  </div>
+
                               </div>
                           </div>
                       </div>
