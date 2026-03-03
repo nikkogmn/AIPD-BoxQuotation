@@ -7,7 +7,8 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 // อย่าลืมดึง storage มาจากไฟล์ firebase.js ด้วย
 import { db, storage } from './firebase';
 // --- Constants ---
-
+import { generateQuotationPDF } from './services/pdfGenerator'; // เช็ค Path ให้ตรงกับที่คุณสร้างไฟล์ด้วยนะครับ
+// ถ้าโปรเจกต์คุณไม่ได้ใช้ react-icons ก็ข้ามบรรทัด FiDownload ไปได้เลยครับ ใช้เป็นรูป 📄 หรือ SVG ของคุณเองได้
 const INDUSTRY_TYPES = [
     "ผลไม้สด (Fresh Fruit)",
     "ผลไม้แปรรูป/อบแห้ง (Processed/Dried Fruit)",
@@ -836,7 +837,7 @@ const calculateTotals = () => {
       }
   };
 
-  // --- ฟังก์ชันลบใบเสนอราคา ---
+// --- ฟังก์ชันลบใบเสนอราคา --- (ของคุณมีอยู่แล้ว)
   const handleDeleteQuotation = async (id) => {
       if(window.confirm('ยืนยันการลบใบเสนอราคานี้? (ลบแล้วกู้คืนไม่ได้)')) {
           try {
@@ -846,6 +847,13 @@ const calculateTotals = () => {
       }
   };
 
+
+  // --- ฟังก์ชันดาวน์โหลด PDF ---
+// --- ฟังก์ชันดาวน์โหลด PDF (เวอร์ชันแปลงข้อมูล + ดักจับ Error) ---
+const handleDownloadPDF = (quot) => {
+    // ส่งข้อมูลก้อนใหญ่จาก Firebase และข้อมูลบริษัทเข้าไปจัดหน้าใน PDF
+    generateQuotationPDF(quot, companyData);
+};
 
 // --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
   const handleEditQuotation = (quot) => {
@@ -1792,6 +1800,13 @@ const handleConfirmAction = async () => {
                                         <td className="p-4 text-xs text-gray-500">{quot.lastModifiedDate ? quot.lastModifiedDate.split('.')[0].replace('T', ' ') : '-'}</td>
                                         <td className="p-4 text-center">
                                             <div className="flex justify-center gap-2">
+                                                <button 
+                                                    onClick={() => handleDownloadPDF(quot)} 
+                                                    className="p-1.5 text-green-600 hover:bg-green-100 rounded transition-colors" 
+                                                    title="ดาวน์โหลด PDF"
+                                                >
+                                                    📄 
+                                                </button>
                                                 <button onClick={() => handleEditQuotation(quot)} className="p-1.5 text-blue-500 hover:bg-blue-100 rounded transition-colors" title="แก้ไขใบเสนอราคา"><Edit size={16} /></button>
                                                 <button onClick={() => handleDeleteQuotation(quot.id)} className="p-1.5 text-red-500 hover:bg-red-100 rounded transition-colors" title="ลบใบเสนอราคา"><Trash2 size={16} /></button>
                                             </div>
