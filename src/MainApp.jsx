@@ -848,12 +848,97 @@ const calculateTotals = () => {
   };
 
 
-  // --- ฟังก์ชันดาวน์โหลด PDF ---
-// --- ฟังก์ชันดาวน์โหลด PDF (เวอร์ชันแปลงข้อมูล + ดักจับ Error) ---
-const handleDownloadPDF = (quot) => {
-    // ส่งข้อมูลก้อนใหญ่จาก Firebase และข้อมูลบริษัทเข้าไปจัดหน้าใน PDF
-    generateQuotationPDF(quot, companyData);
-};
+// --- ฟังก์ชันดาวน์โหลด PDF (อัปเดต: พ่วงระบบคำนวณราคาเข้าไปด้วย) ---
+  const handleDownloadPDF = (quot) => {
+      console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
+
+      // 1. ดึงชื่อสินค้าและข้อมูลลูกค้า
+      const boxStyle = boxStyles.find(b => b.id?.toString() === quot.boxStyleId?.toString());
+      const paper = paperTypes.find(p => p.id?.toString() === quot.paperTypeId?.toString());
+      const boxName = boxStyle?.codeName || 'กล่องลูกฟูกตามสั่ง';
+      const paperName = paper?.codeName || 'ไม่ระบุเกรด';
+      const customerFull = customers.find(c => c.id?.toString() === quot.customerId?.toString()) || {};
+
+      // 2. 🧮 คำนวณราคาใหม่เฉพาะสำหรับใบที่กดดาวน์โหลด
+      const W = parseFloat(quot.dimW) || 0;
+      const D = parseFloat(quot.dimD) || 0;
+      const H = parseFloat(quot.dimH) || 0;
+      const G = parseFloat(quot.dimG) || 0;
+      const M = parseFloat(quot.dimM) || 0;
+
+      let areaSqCm = 0;
+      if (boxStyle && boxStyle.formula) {
+          try {
+              const calcArea = new Function('W', 'D', 'H', 'G', 'M', `return ${boxStyle.formula};`);
+              areaSqCm = calcArea(W, D, H, G, M);
+              if (isNaN(areaSqCm) || areaSqCm < 0) areaSqCm = 0;
+          } catch (error) { areaSqCm = 0; }
+      }
+      
+      const areaSqFt = areaSqCm / 929.0304; 
+      const paperPricePerSqFt = paper ? parseFloat(paper.price) : 0;
+      const rawBoxCost = areaSqFt * paperPricePerSqFt; 
+      const colorCostPerBox = parseFloat(quot.printCostPerBox) || 0;
+      const boxCostTotal = rawBoxCost + colorCostPerBox; // ต้นทุนกล่อง/ใบ
+
+      const blocks1 = (quot.printBlocks1 || []).reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
+      const blocks2 = (quot.printBlocks2 || []).reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
+      const blockCostTotal = blocks1 + blocks2; // ค่าบล็อคทั้งหมด
+
+      let dieCutCost = 0; 
+      if (quot.dieCutId && quot.dieCutW && quot.dieCutL) {
+          const dcW = parseFloat(quot.dieCutW) || 0;
+          const dcL = parseFloat(quot.dieCutL) || 0;
+          const mold = dieCutMolds.find(d => d.id?.toString() === quot.dieCutId?.toString());
+          const moldPrice = mold ? parseFloat(mold.price) : 0;
+          dieCutCost = (dcW * dcL) * moldPrice; // ค่าใบมีด
+      }
+
+      const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
+      const setup = parseFloat(quot.setupCost) || 0;
+      
+      // สรุปต้นทุนทั้งหมด
+      const totalFixedCosts = blockCostTotal + dieCutCost + setup + shipCost;
+      const qty = parseInt(quot.quantity) || 1;
+      const totalVariableCost = boxCostTotal * qty;
+      const grandTotalCost = totalVariableCost + totalFixedCosts;
+
+      // บวกกำไรและหักส่วนลด
+      const profitPercent = parseFloat(quot.profitMargin) || 0;
+      const profitAmount = grandTotalCost * (profitPercent / 100);
+      const totalWithProfit = grandTotalCost + profitAmount;
+
+      const discountPercent = parseFloat(quot.discount) || 0;
+      const discountAmount = totalWithProfit * (discountPercent / 100);
+      const totalAfterDiscount = totalWithProfit - discountAmount;
+
+      // ภาษี 7%
+      const vat = totalAfterDiscount * 0.07;
+      const netTotal = totalAfterDiscount + vat;
+      const pricePerBox = totalAfterDiscount / qty;
+
+      // แพ็คข้อมูลราคาที่คำนวณได้
+      const calculatedTotals = {
+          boxCostA: boxCostTotal,
+          blockCostB: blockCostTotal,
+          dieCutC: dieCutCost,
+          shipCost,
+          setupCost: setup,
+          grandTotalCost,
+          totalAfterDiscount,
+          netTotal,
+          pricePerBox
+      };
+
+      // 3. ส่งข้อมูลทั้งหมดรวมถึงราคาที่คำนวณแล้วไปสร้าง PDF
+      generateQuotationPDF(
+          quot, 
+          companyData, 
+          calculatedTotals, // <-- ส่งตัวนี้แทนตัวเก่า
+          { boxName, paperName },
+          customerFull 
+      );
+  };
 
 // --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
   const handleEditQuotation = (quot) => {
@@ -2861,38 +2946,65 @@ const handleConfirmAction = async () => {
     );
   };
 
-  const renderPreviewModal = () => {
-      if (modalMode !== 'preview' || !selectedItem || activeSubTab !== 'boxStyle') return null;
-       return (
-        <Modal
-            isOpen={true}
-            title={`Preview Diagram: ${selectedItem.codeName}`}
-            onClose={() => setModalMode(null)}
-            size="lg"
-            footer={<Button variant="secondary" onClick={() => setModalMode(null)}>ปิดหน้าต่าง</Button>}
-        >
-            <div className="flex flex-col gap-4">
-                <div className="text-center mb-2">
-                    <h4 className="text-xl font-bold text-gray-800">{selectedItem.globalName}</h4>
-                    <p className="text-gray-500">แบบจำลองโครงสร้างกล่องและตำแหน่งตัวแปร</p>
-                </div>
-                <BoxSchematic codeName={selectedItem.codeName} globalName={selectedItem.globalName} />
-                {selectedItem.imageUrl && (
-                    <div className="mt-4 border-t pt-4 text-center">
-                         <img src={selectedItem.imageUrl} alt="Reference" className="max-h-64 object-contain inline-block border rounded p-2" />
-                    </div>
-                )}
-                {selectedItem.note && (
-                   <div className="mt-4 p-4 bg-yellow-50 border border-yellow-100 rounded-lg text-sm text-yellow-800 flex gap-2 items-start">
-                      <StickyNote size={18} className="mt-0.5 shrink-0" />
-                      <div><span className="font-semibold block mb-1">Note:</span>{selectedItem.note}</div>
-                   </div>
-                )}
-            </div>
-        </Modal>
-    );
-  };
+const renderPreviewModal = () => {
+      if (modalMode !== 'preview' || !selectedItem || activeSubTab !== 'boxStyle') return null;
+      
+      return (
+        <Modal
+            isOpen={true}
+            title={`Preview: ${selectedItem.codeName}`}
+            onClose={() => setModalMode(null)}
+            size="lg"
+            footer={<Button variant="secondary" onClick={() => setModalMode(null)}>ปิดหน้าต่าง</Button>}
+        >
+            <div className="flex flex-col gap-4">
+                <div className="text-center mb-2">
+                    <h4 className="text-xl font-bold text-gray-800">{selectedItem.globalName || selectedItem.codeName}</h4>
+                    <p className="text-gray-500">แบบจำลองโครงสร้างกล่อง</p>
+                </div>
 
+                {/* 🌟 เช็คเงื่อนไข: ถ้ารูปแบบเป็น OTHER ให้โชว์รูปภาพ ถ้าไม่ใช่ให้วาดแบบจำลอง */}
+                {selectedItem.baseType === 'OTHER' ? (
+                    <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex items-center justify-center min-h-[300px]">
+                        {selectedItem.imageUrl ? (
+                            <img 
+                                src={selectedItem.imageUrl} 
+                                alt={`ภาพตัวอย่าง ${selectedItem.codeName}`} 
+                                className="max-h-[400px] max-w-full object-contain rounded-lg shadow-sm" 
+                            />
+                        ) : (
+                            <div className="text-center text-gray-400">
+                                <Box size={48} className="mx-auto mb-3 opacity-30" />
+                                <p className="font-semibold text-gray-500">กล่องรูปแบบพิเศษ</p>
+                                <p className="text-sm">ยังไม่ได้อัปโหลดรูปภาพประกอบ</p>
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm pointer-events-none">
+                        <BoxSchematic 
+                            baseType={selectedItem.baseType} 
+                            codeName={selectedItem.codeName} 
+                            globalName={selectedItem.globalName}
+                            dimensions={{ W: 'W', D: 'D', H: 'H', G: 'G', M: 'M' }} // โชว์เป็นตัวอักษรแทนตัวเลข
+                        />
+                    </div>
+                )}
+
+                {/* โชว์ Note (ถ้ามี) */}
+                {selectedItem.note && (
+                   <div className="mt-2 p-4 bg-yellow-50 border border-yellow-100 rounded-lg text-sm text-yellow-800 flex gap-2 items-start shadow-sm">
+                      <StickyNote size={18} className="mt-0.5 shrink-0 text-yellow-600" />
+                      <div>
+                          <span className="font-bold block mb-1">Note (หมายเหตุ):</span>
+                          {selectedItem.note}
+                      </div>
+                   </div>
+                )}
+            </div>
+        </Modal>
+    );
+  };
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-900 pb-20">
       <div className="max-w-7xl mx-auto p-6">
