@@ -356,7 +356,7 @@ export default function MainApp({ userRole , userEmail}){
   const [activeMainTab, setActiveMainTab] = useState('quotation'); 
   const [activeSubTab, setActiveSubTab] = useState('customer'); 
   const [currentUnit, setCurrentUnit] = useState('cm'); 
-  
+  const [showCostCalc, setShowCostCalc] = useState(false); // State สำหรับเปิด/ปิด Breakdown ราคา
    // --- เพิ่ม State สำหรับข้อมูลบริษัท ตรงนี้เลยครับ 👇 ---
   const defaultCompanyState = {
       nameTH: '', nameEN: '',
@@ -576,6 +576,7 @@ const fetchAllMasterData = async () => {
   }, []);
   // 8. Quotations
   const [quotationView, setQuotationView] = useState('list'); 
+ const [quotationList, setQuotationList] = useState([]);
   const [currentQuot, setCurrentQuot] = useState({
       customerId: '',
       customerName: '',
@@ -651,8 +652,8 @@ const handleUpdateBlock = (colorIndex, blockId, field, value) => {
   };
 
   // --- Calculation Logic ---
-  const calculateTotals = () => {
-      // 1. Box Cost (คำนวณสูตร Dynamic + แปลงเป็นตารางฟุต)
+const calculateTotals = () => {
+      // 1. Box Cost (คำนวณสูตร Dynamic + แปลงเป็นตารางฟุต)
       const W = parseFloat(currentQuot.dimW) || 0;
       const D = parseFloat(currentQuot.dimD) || 0;
       const H = parseFloat(currentQuot.dimH) || 0;
@@ -693,60 +694,133 @@ const handleUpdateBlock = (colorIndex, blockId, field, value) => {
       const colorCostPerBox = parseFloat(currentQuot.printCostPerBox) || 0;
       const boxCostTotal = rawBoxCost + colorCostPerBox; // A
 
-      // 2. Block Cost
-      const blocks1 = currentQuot.printBlocks1.reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
-      const blocks2 = currentQuot.printBlocks2.reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
-      const blockCostTotal = blocks1 + blocks2; // B
+      // 2. Block Cost
+      // (ใส่ || [] เผื่อไว้ป้องกัน Error กรณีที่ array ว่างครับ)
+      const blocks1 = (currentQuot.printBlocks1 || []).reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
+      const blocks2 = (currentQuot.printBlocks2 || []).reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
+      const blockCostTotal = blocks1 + blocks2; // B
 
-      // 3. Die Cut (Placeholder)
-      const dieCutCost = 0; // C
+      // 3. Die Cut Cost (C) - 🌟 เพิ่มสูตรคำนวณใบมีดตรงนี้
+      let dieCutCost = 0; 
+      if (currentQuot.dieCutId && currentQuot.dieCutW && currentQuot.dieCutL) {
+          const dcW = parseFloat(currentQuot.dieCutW) || 0;
+          const dcL = parseFloat(currentQuot.dieCutL) || 0;
+          
+          // หาข้อมูลราคาใบมีดจาก Master Data
+          const mold = dieCutMolds.find(d => d.id.toString() === currentQuot.dieCutId);
+          const moldPrice = mold ? parseFloat(mold.price) : 0;
+          
+          // สูตร: (กว้าง x ยาว เป็นนิ้ว) x ราคาต่อตารางนิ้ว
+          dieCutCost = (dcW * dcL) * moldPrice; 
+      }
 
-      // 4. Logistics & Setup
-      const shipCost = currentQuot.shippingType === 'delivery' ? (parseFloat(currentQuot.shippingCost) || 0) : 0;
-      const setup = parseFloat(currentQuot.setupCost) || 0;
-      
-      // Total Items Cost (Fixed Costs)
-      const totalFixedCosts = blockCostTotal + dieCutCost + setup + shipCost;
+      // 4. Logistics & Setup
+      const shipCost = currentQuot.shippingType === 'delivery' ? (parseFloat(currentQuot.shippingCost) || 0) : 0;
+      const setup = parseFloat(currentQuot.setupCost) || 0;
+      
+      // Total Items Cost (Fixed Costs)
+      const totalFixedCosts = blockCostTotal + dieCutCost + setup + shipCost;
 
-      // Total Variable Cost (Per Lot) = (BoxCost * Qty)
-      const qty = parseInt(currentQuot.quantity) || 1;
-      const totalVariableCost = boxCostTotal * qty;
+      // Total Variable Cost (Per Lot) = (BoxCost * Qty)
+      const qty = parseInt(currentQuot.quantity) || 1;
+      const totalVariableCost = boxCostTotal * qty;
 
-      const grandTotalCost = totalVariableCost + totalFixedCosts;
+      const grandTotalCost = totalVariableCost + totalFixedCosts;
 
-      // Profit & Discount
-      const profitPercent = parseFloat(currentQuot.profitMargin) || 0;
-      const profitAmount = grandTotalCost * (profitPercent / 100);
-      const totalWithProfit = grandTotalCost + profitAmount;
+      // Profit & Discount
+      const profitPercent = parseFloat(currentQuot.profitMargin) || 0;
+      const profitAmount = grandTotalCost * (profitPercent / 100);
+      const totalWithProfit = grandTotalCost + profitAmount;
 
-      const discountPercent = parseFloat(currentQuot.discount) || 0;
-      const discountAmount = totalWithProfit * (discountPercent / 100);
-      const totalAfterDiscount = totalWithProfit - discountAmount;
+      const discountPercent = parseFloat(currentQuot.discount) || 0;
+      const discountAmount = totalWithProfit * (discountPercent / 100);
+      const totalAfterDiscount = totalWithProfit - discountAmount;
 
-      const vat = totalAfterDiscount * 0.07;
-      const netTotal = totalAfterDiscount + vat;
+      const vat = totalAfterDiscount * 0.07;
+      const netTotal = totalAfterDiscount + vat;
 
-      const pricePerBox = totalAfterDiscount / qty;
+      const pricePerBox = totalAfterDiscount / qty;
 
-      return {
-          boxCostA: boxCostTotal,
-          colorCostDetail: colorCostPerBox,
-          blockCostB: blockCostTotal,
-          blocks1Detail: currentQuot.printBlocks1,
-          blocks2Detail: currentQuot.printBlocks2,
-          dieCutC: dieCutCost,
-          shipCost,
-          setupCost: setup,
-          grandTotalCost,
-          totalWithProfit,
-          totalAfterDiscount,
-          netTotal,
-          pricePerBox
-      };
-  };
-
+      return {
+          boxCostA: boxCostTotal,
+          colorCostDetail: colorCostPerBox,
+          blockCostB: blockCostTotal,
+          blocks1Detail: currentQuot.printBlocks1,
+          blocks2Detail: currentQuot.printBlocks2,
+          dieCutC: dieCutCost, // ส่งค่าใบมีดออกไปใช้งาน
+          shipCost,
+          setupCost: setup,
+          grandTotalCost,
+          totalWithProfit,
+          totalAfterDiscount,
+          netTotal,
+          pricePerBox
+      };
+  };
   const totals = useMemo(() => calculateTotals(), [currentQuot, paperTypes]);
 
+// --- ฟังก์ชันจัดฟอร์แมตวันที่แบบ ddMMMyyyy (เช่น 03Mar2026) ---
+  const formatQuotDateForName = (dateStr) => {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${day}${months[d.getMonth()]}${d.getFullYear()}`;
+  };
+
+  // --- ฟังก์ชันสร้างชื่อใบเสนอราคาอัตโนมัติ ---
+  const generateQuotName = (quot) => {
+      const cusName = customers.find(c => c.id === quot.customerId)?.name || 'ไม่ระบุลูกค้า';
+      const boxName = boxStyles.find(b => b.id.toString() === quot.boxStyleId)?.codeName || 'ไม่ระบุกล่อง';
+      const paperName = paperTypes.find(p => p.id.toString() === quot.paperTypeId)?.codeName || 'ไม่ระบุกระดาษ';
+      const qty = quot.quantity || 1;
+      const date = formatQuotDateForName(quot.createdDate);
+      
+      return `${cusName} - ${boxName} - ${paperName} - ${qty}ใบ - ${date}`;
+  };
+
+  // --- รายการสถานะของใบเสนอราคา ---
+  const quotationStatuses = [
+      "0.แบบร่าง", 
+      "1.รอการตรวจสอบ", 
+      "2.พร้อมเสนอลูกค้า", 
+      "3.1สั่งผลิต", 
+      "3.2 ปิดรายการ"
+  ];
+
+  // --- ฟังก์ชันเปลี่ยนสถานะ (Update Status) ผ่านตาราง ---
+  const handleStatusChange = async (id, newStatus) => {
+      try {
+          await updateDoc(doc(db, "quotations", id), {
+              status: newStatus,
+              lastModifiedBy: userEmail,
+              lastModifiedDate: getDateTime()
+          });
+          // อัปเดตข้อมูลบนหน้าจอทันที
+          setQuotationList(prev => prev.map(q => 
+              q.id === id ? { ...q, status: newStatus, lastModifiedBy: userEmail, lastModifiedDate: getDateTime() } : q
+          ));
+      } catch (error) {
+          alert("อัปเดตสถานะไม่สำเร็จ: " + error.message);
+      }
+  };
+
+  // --- ฟังก์ชันลบใบเสนอราคา ---
+  const handleDeleteQuotation = async (id) => {
+      if(window.confirm('ยืนยันการลบใบเสนอราคานี้? (ลบแล้วกู้คืนไม่ได้)')) {
+          try {
+              await deleteDoc(doc(db, "quotations", id));
+              setQuotationList(prev => prev.filter(q => q.id !== id));
+          } catch (error) { alert("ลบข้อมูลไม่สำเร็จ: " + error.message); }
+      }
+  };
+
+  // --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
+  const handleEditQuotation = (quot) => {
+      setCurrentQuot(quot);
+      // *** หมายเหตุ: ถ้าคุณมี State สำหรับสลับหน้า (เช่น setIsCreating(true)) ให้เรียกตรงนี้ด้วยครับ ***
+      // เช่น setIsCreating(true); หรือ setActiveTab('quotationForm');
+  };
 
   // --- Actions ---
 
@@ -1514,7 +1588,34 @@ const handleSaveCompanyData = async () => {
       </div>
     </div>
   );
+  // --- ฟังก์ชันบันทึกใบเสนอราคาลง Database ---
+  const handleSaveQuotation = async () => {
+      try {
+          // ตรวจสอบข้อมูลเบื้องต้น
+          if (!currentQuot.customerId || !currentQuot.boxStyleId || !currentQuot.paperTypeId) {
+              alert("กรุณาเลือก ลูกค้า, รูปแบบกล่อง และ เกรดกระดาษ ให้ครบถ้วนก่อนบันทึก");
+              return;
+          }
 
+          const quotDataToSave = {
+              ...currentQuot,
+              quotationNo: `QT-${new Date().getTime()}`, // รันรหัสใบเสนอราคาเบื้องต้น
+              createdBy: userEmail,
+              createdDate: getDateTime(),
+              status: 'Saved'
+          };
+          
+          // บันทึกลงตาราง quotations (Firebase)
+          await addDoc(collection(db, "quotations"), quotDataToSave);
+          alert("✅ บันทึกใบเสนอราคาลงระบบสำเร็จ!");
+          
+          // ตัวเลือก: เคลียร์หน้าจอ หรือ พากลับไปหน้ารายการ
+          // setActiveMainTab('quotationList'); // (ถ้ามีหน้ารายการ)
+      } catch (error) {
+          console.error("Save Quotation Error:", error);
+          alert("บันทึกไม่สำเร็จ: " + error.message);
+      }
+  };
   // NEW: Quotation Screen
   const renderQuotationScreen = () => {
     // List View
@@ -1552,14 +1653,99 @@ const handleSaveCompanyData = async () => {
                  </div>
 
                  {/* Recent List */}
-                 <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-                    <div className="p-4 border-b border-gray-200">
-                        <h3 className="font-bold text-gray-800">รายการล่าสุด</h3>
-                    </div>
-                    <div className="p-8 text-center text-gray-400">
-                        ยังไม่มีข้อมูลใบเสนอราคา
-                    </div>
-                 </div>
+                 {/* ตารางรายการใบเสนอราคาล่าสุด (Quotation Dashboard) */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mt-6">
+                <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+                    <h3 className="font-bold text-gray-800">รายการใบเสนอราคาที่บันทึกไว้</h3>
+                    <span className="text-sm font-medium bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
+                        ทั้งหมด {quotationList?.length || 0} รายการ
+                    </span>
+                </div>
+                
+                <div className="overflow-x-auto max-h-[600px]">
+                    <table className="w-full text-left border-collapse text-sm whitespace-nowrap">
+                        <thead className="bg-white sticky top-0 shadow-sm z-10">
+                            <tr className="text-gray-500 text-xs uppercase tracking-wider bg-gray-50">
+                                <th className="p-4 border-b">ชื่อใบเสนอราคา</th>
+                                <th className="p-4 border-b w-40">สถานะ (Status)</th>
+                                <th className="p-4 border-b">สร้างโดย</th>
+                                <th className="p-4 border-b">แก้ไขโดย</th>
+                                <th className="p-4 border-b">สร้างเมื่อ</th>
+                                <th className="p-4 border-b">แก้ไขล่าสุด</th>
+                                <th className="p-4 border-b text-center">จัดการ</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {(!quotationList || quotationList.length === 0) ? (
+                                <tr>
+                                    <td colSpan="7" className="p-10 text-center text-gray-400">
+                                        <div className="flex flex-col items-center gap-2">
+                                            <FileText size={48} className="text-gray-200" />
+                                            <p>ยังไม่มีข้อมูลใบเสนอราคา</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ) : (
+                                quotationList.map((quot) => (
+                                    <tr key={quot.id} className="hover:bg-blue-50/30 transition-colors">
+                                        {/* ชื่อใบเสนอราคา (Auto Generate) */}
+                                        <td className="p-4 font-medium text-gray-800 max-w-[300px] truncate" title={generateQuotName(quot)}>
+                                            {generateQuotName(quot)}
+                                        </td>
+                                        
+                                        {/* สถานะ (Dropdown เปลี่ยนสถานะได้ทันที) */}
+                                        <td className="p-4">
+                                            <select 
+                                                className={`text-xs font-semibold py-1 px-2 rounded border cursor-pointer outline-none transition-colors
+                                                    ${quot.status?.startsWith('0') ? 'bg-gray-100 text-gray-600 border-gray-200' : 
+                                                      quot.status?.startsWith('1') ? 'bg-yellow-100 text-yellow-700 border-yellow-200' : 
+                                                      quot.status?.startsWith('2') ? 'bg-blue-100 text-blue-700 border-blue-200' : 
+                                                      quot.status?.startsWith('3.1') ? 'bg-green-100 text-green-700 border-green-200' : 
+                                                      'bg-gray-800 text-white border-gray-700' // 3.2 ปิดรายการ
+                                                    }`}
+                                                value={quot.status || "0.แบบร่าง"}
+                                                onChange={(e) => handleStatusChange(quot.id, e.target.value)}
+                                            >
+                                                {quotationStatuses.map(s => (
+                                                    <option key={s} value={s} className="bg-white text-gray-800">{s}</option>
+                                                ))}
+                                            </select>
+                                        </td>
+
+                                        {/* ข้อมูล Audit Log */}
+                                        <td className="p-4 text-gray-600">{quot.createdBy || '-'}</td>
+                                        <td className="p-4 text-gray-600">{quot.lastModifiedBy || '-'}</td>
+                                        
+                                        {/* เวลาสร้าง/แก้ไข (ใช้ split ตัดเอาแค่โซนเวลาให้ดูง่ายขึ้น) */}
+                                        <td className="p-4 text-xs text-gray-500">{quot.createdDate ? quot.createdDate.split('.')[0].replace('T', ' ') : '-'}</td>
+                                        <td className="p-4 text-xs text-gray-500">{quot.lastModifiedDate ? quot.lastModifiedDate.split('.')[0].replace('T', ' ') : '-'}</td>
+
+                                        {/* ปุ่มจัดการ Edit / Delete */}
+                                        <td className="p-4 text-center">
+                                            <div className="flex justify-center gap-2">
+                                                <button 
+                                                    onClick={() => handleEditQuotation(quot)}
+                                                    className="p-1.5 text-blue-500 hover:bg-blue-100 rounded transition-colors"
+                                                    title="แก้ไขใบเสนอราคา"
+                                                >
+                                                    <Edit size={16} />
+                                                </button>
+                                                <button 
+                                                    onClick={() => handleDeleteQuotation(quot.id)}
+                                                    className="p-1.5 text-red-500 hover:bg-red-100 rounded transition-colors"
+                                                    title="ลบใบเสนอราคา"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
             </div>
         );
     } 
@@ -1569,74 +1755,113 @@ const handleSaveCompanyData = async () => {
         const selectedBoxStyle = boxStyles.find(b => b.id.toString() === currentQuot.boxStyleId);
 
         // Helper to render Print Config
-        const renderPrintConfig = (index) => {
-             const colorField = index === 1 ? 'printColor1' : 'printColor2';
-             const blocksField = index === 1 ? 'printBlocks1' : 'printBlocks2';
-             const blocks = currentQuot[blocksField];
+        // --- ฟังก์ชันสร้างฟอร์มการพิมพ์สีที่ 1 และ 2 ---
+ // --- ฟังก์ชันสร้างฟอร์มการพิมพ์สีที่ 1 และ 2 ---
+    const renderPrintConfig = (colorIndex) => {
+        const stateField = colorIndex === 1 ? 'printBlocks1' : 'printBlocks2';
+        const colorField = colorIndex === 1 ? 'printColorId1' : 'printColorId2';
+        const blocks = currentQuot[stateField] || [];
 
-             return (
-                 <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-4 animate-in fade-in slide-in-from-top-2">
-                     <h5 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                         <Droplet size={16} className={index === 1 ? "text-cyan-500" : "text-magenta-500"}/>
-                         พิมพ์สีที่ {index}
-                     </h5>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                         <InputGroup 
-                            label="1.1.1 เลือกสี (Master Data)" 
-                            type="select"
-                            options={printColors.map(c => ({label: `${c.codeName} - ${c.globalName}`, value: c.id}))}
-                            value={currentQuot[colorField]}
-                            onChange={(v) => setCurrentQuot({...currentQuot, [colorField]: v})}
-                         />
-                         <div className="flex items-end mb-4">
-                            <Button variant="outline" icon={Plus} onClick={() => handleAddBlock(index)} className="w-full">
-                                1.1.2 เพิ่มแบบพิมพ์ (Max 30)
-                            </Button>
-                         </div>
-                     </div>
+        return (
+            <div className="border border-blue-100 rounded-xl p-5 bg-blue-50/20 mb-6 shadow-sm">
+                <h4 className="font-bold text-blue-800 mb-4 flex items-center gap-2 border-b border-blue-100 pb-2">
+                    <Droplet size={18} className="text-blue-500" /> พิมพ์สีที่ {colorIndex}
+                </h4>
+                
+                {/* 🌟 จุดที่แก้ไข: แยก Dropdown และปุ่มให้อยู่คนละบรรทัด */}
+                <div className="mb-6">
+                    {/* บรรทัดที่ 1: Dropdown เลือกสี */}
+                    <div className="mb-4">
+                        <InputGroup 
+                            label={`1.${colorIndex}.1 เลือกสี (Master Data)`}
+                            type="select"
+                            options={printColors.map(c => ({label: `${c.codeName} - ${c.globalName}`, value: c.id}))}
+                            value={currentQuot[colorField] || ''}
+                            onChange={(v) => setCurrentQuot({...currentQuot, [colorField]: v})}
+                            placeholder="-- เลือกสี --"
+                        />
+                    </div>
+                    
+                    {/* บรรทัดที่ 2: ปุ่มเพิ่มแบบพิมพ์ (ตรงตำแหน่งกรอบสีแดง) */}
+                    <div> 
+                        <Button 
+                            variant="primary" 
+                            icon={Plus} 
+                            onClick={() => handleAddBlock(colorIndex)}
+                            className="w-full md:w-auto shadow-sm"
+                        >
+                            {` 1.${colorIndex}.2 เพิ่มแบบพิมพ์ (Max 30)`}
+                        </Button>
+                    </div>
+                </div>
 
-                     {/* Blocks List */}
-                     {blocks.length > 0 && (
-                         <div className="space-y-3">
-                             {blocks.map((block, idx) => (
-                                 <div key={block.id} className="bg-white p-3 rounded border border-gray-200 shadow-sm relative">
-                                     <button onClick={() => handleRemoveBlock(index, block.id)} className="absolute top-2 right-2 text-gray-400 hover:text-red-500"><X size={16}/></button>
-                                     <div className="grid grid-cols-12 gap-2 items-end">
-                                         <div className="col-span-4">
-                                             <label className="text-xs font-semibold text-gray-500">เลือกแบบพิมพ์</label>
-                                             <select 
-                                                className="w-full p-1.5 border border-gray-300 rounded text-sm"
-                                                value={block.typeId}
-                                                onChange={(e) => handleUpdateBlock(index, block.id, 'typeId', e.target.value)}
-                                             >
-                                                 <option value="">-- เลือก --</option>
-                                                 {printBlocks.map(pb => (
-                                                     <option key={pb.id} value={pb.id}>{pb.codeName}</option>
-                                                 ))}
-                                             </select>
-                                         </div>
-                                         <div className="col-span-3">
-                                             <label className="text-xs font-semibold text-gray-500">กว้าง x ยาว ({currentUnit})</label>
-                                             <div className="flex gap-1">
-                                                 <input type="number" className="w-full p-1.5 border rounded text-sm" placeholder="W" value={block.w} onChange={(e) => handleUpdateBlock(index, block.id, 'w', e.target.value)} />
-                                                 <input type="number" className="w-full p-1.5 border rounded text-sm" placeholder="L" value={block.l} onChange={(e) => handleUpdateBlock(index, block.id, 'l', e.target.value)} />
-                                             </div>
-                                         </div>
-                                         <div className="col-span-2">
-                                              <label className="text-xs font-semibold text-gray-500 text-right block">ราคา</label>
-                                              <div className="p-1.5 bg-gray-100 rounded text-sm text-right font-medium">
-                                                  {block.price.toFixed(2)}
-                                              </div>
-                                         </div>
-                                     </div>
-                                 </div>
-                             ))}
-                         </div>
-                     )}
-                 </div>
-             );
-        };
+                <div className="space-y-4">
+                    {blocks.map((b) => (
+                        <div key={b.id} className="relative bg-white p-4 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 transition-colors">
+                            <button 
+                                onClick={() => handleRemoveBlock(colorIndex, b.id)}
+                                className="absolute top-2 right-2 text-gray-400 hover:text-red-500 transition-colors p-1 bg-gray-50 rounded-full hover:bg-red-50"
+                                title="ลบบล็อคนี้"
+                            >
+                                <X size={16} />
+                            </button>
 
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-start pr-8">
+                                <div className="md:col-span-1">
+                                    <InputGroup 
+                                        label="เลือกแบบพิมพ์" 
+                                        type="select" 
+                                        // เอาตัวเลือกเบิ้ลออกตรงนี้ด้วยเช่นกัน
+                                        options={printBlocks.map(pb => ({label: pb.codeName, value: pb.id}))}
+                                        value={b.typeId || ''}
+                                        onChange={(v) => handleUpdateBlock(colorIndex, b.id, 'typeId', v)}
+                                        placeholder="-- เลือกบล็อค --"
+                                    />
+                                </div>
+                                <div className="md:col-span-1">
+                                    <InputGroup 
+                                        label="กว้าง (นิ้ว)" 
+                                        type="number" 
+                                        value={b.w || ''}
+                                        onChange={(v) => handleUpdateBlock(colorIndex, b.id, 'w', v)}
+                                    />
+                                </div>
+                                <div className="md:col-span-1">
+                                    <InputGroup 
+                                        label="ยาว (นิ้ว)" 
+                                        type="number" 
+                                        value={b.l || ''}
+                                        onChange={(v) => handleUpdateBlock(colorIndex, b.id, 'l', v)}
+                                    />
+                                </div>
+                                <div className="md:col-span-1">
+                                    <InputGroup 
+                                        label="ราคา (฿)" 
+                                        type="number" 
+                                        value={b.price || ''}
+                                        readOnly
+                                        className="bg-gray-50 font-semibold text-blue-600"
+                                    />
+                                </div>
+
+                                {/* 👉 🧮 ส่วนแสดงวิธีคิดราคาบล็อคพิมพ์ */}
+                                {(b.w && b.l && b.typeId) ? (
+                                    <div className="md:col-span-4 mt-1 flex flex-wrap items-center gap-2 px-3 py-2 bg-blue-50/50 border border-blue-100 rounded-lg text-sm text-gray-700">
+                                        <span className="font-semibold text-blue-800">🧮 วิธีคิดราคาบล็อค:</span> 
+                                        <span>{b.w} × {b.l} <span className="text-xs text-gray-500">ตร.นิ้ว</span></span> 
+                                        <span className="text-xs text-blue-400">×</span> 
+                                        <span>{printBlocks.find(pb => pb.id.toString() === b.typeId)?.price || 0} <span className="text-xs text-gray-500">฿/ตร.นิ้ว</span></span>
+                                        <span className="text-blue-400">=</span> 
+                                        <span className="font-bold text-gray-900 text-base">{(parseFloat(b.price) || 0).toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                    </div>
+                                ) : null}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    };
         return (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 min-h-[600px] flex flex-col">
                 {/* Header */}
@@ -1651,8 +1876,9 @@ const handleSaveCompanyData = async () => {
                         </div>
                     </div>
                     <div className="flex gap-2">
-                        <Button variant="secondary" icon={Save}>บันทึกร่าง</Button>
-                        <Button variant="primary" icon={CheckCircle}>ยืนยันใบเสนอราคา</Button>
+                            <Button variant="primary" icon={Save} onClick={handleSaveQuotation}>
+                                บันทึกใบเสนอราคา
+                            </Button>  
                     </div>
                 </div>
 
@@ -1743,6 +1969,95 @@ const handleSaveCompanyData = async () => {
                                         value={currentQuot.paperTypeId}
                                         onChange={(v) => setCurrentQuot({...currentQuot, paperTypeId: v})}
                                     />
+                                {/* --- 🧮 ระบบแสดงวิธีคำนวณราคา (Cost Breakdown) --- */}
+                                    {(() => {
+                                        // 1. ดึงค่าตัวแปรปัจจุบัน
+                                        const W_val = parseFloat(currentQuot.dimW) || 0;
+                                        const D_val = parseFloat(currentQuot.dimD) || 0;
+                                        const H_val = parseFloat(currentQuot.dimH) || 0;
+                                        const G_val = parseFloat(currentQuot.dimG) || 0;
+                                        const M_val = parseFloat(currentQuot.dimM) || 0;
+                                        
+                                        const selBox = boxStyles.find(b => b.id.toString() === currentQuot.boxStyleId);
+                                        const selPaper = paperTypes.find(p => p.id.toString() === currentQuot.paperTypeId);
+                                        
+                                        let formulaStr = selBox?.formula || "ไม่มีสูตร";
+                                        let substitutedStr = formulaStr;
+                                        let areaCm2 = 0;
+
+                                        // 2. คำนวณและสร้างข้อความแทนค่า
+                                        if (selBox && selBox.formula) {
+                                            try {
+                                                const calcFunc = new Function('W', 'D', 'H', 'G', 'M', `return ${selBox.formula};`);
+                                                areaCm2 = calcFunc(W_val, D_val, H_val, G_val, M_val);
+                                                if (isNaN(areaCm2) || areaCm2 < 0) areaCm2 = 0;
+                                                
+                                                // แทนค่าตัวอักษรด้วยตัวเลขเพื่อแสดงผล (ใช้ Regex ป้องกันการแทนที่ผิดคำ)
+                                                substitutedStr = formulaStr
+                                                    .replace(/\bW\b/g, W_val)
+                                                    .replace(/\bD\b/g, D_val)
+                                                    .replace(/\bH\b/g, H_val)
+                                                    .replace(/\bG\b/g, G_val)
+                                                    .replace(/\bM\b/g, M_val);
+                                            } catch(e) {}
+                                        }
+
+                                        const areaFt2 = areaCm2 / 929.0304;
+                                        const pPrice = selPaper ? parseFloat(selPaper.price) : 0;
+                                        const rawCost = areaFt2 * pPrice;
+
+                                        return (
+                                            <div className="mt-4 border border-blue-200 rounded-lg overflow-hidden bg-white shadow-sm">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowCostCalc(!showCostCalc)}
+                                                    className="w-full bg-blue-50/50 px-4 py-3 flex justify-between items-center text-blue-800 font-semibold hover:bg-blue-100 transition-colors"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span>🧮 แสดงวิธีคิดราคาต้นทุนกระดาษ (Cost Breakdown)</span>
+                                                    </div>
+                                                    <span className="text-blue-500">{showCostCalc ? '▲ ปิด' : '▼ เปิดดู'}</span>
+                                                </button>
+
+                                                {showCostCalc && (
+                                                    <div className="p-5 text-sm space-y-4 text-gray-700">
+                                                        <div className="flex flex-col md:flex-row md:justify-between border-b border-gray-100 pb-3 gap-2">
+                                                            <span className="font-medium text-gray-500 min-w-[150px]">1. สูตรพื้นที่กล่องคลี่:</span>
+                                                            <span className="font-mono bg-gray-50 px-2 py-1 rounded text-blue-600 border border-gray-200 text-right break-all">
+                                                                {formulaStr}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex flex-col md:flex-row md:justify-between border-b border-gray-100 pb-3 gap-2">
+                                                            <span className="font-medium text-gray-500 min-w-[150px]">2. แทนค่าตัวแปร:</span>
+                                                            <span className="font-mono text-gray-600 text-right break-all">
+                                                                {substitutedStr}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex flex-col md:flex-row md:justify-between border-b border-gray-100 pb-3 gap-2">
+                                                            <span className="font-medium text-gray-500 min-w-[150px]">3. พื้นที่กระดาษ:</span>
+                                                            <div className="text-right">
+                                                                <div className="font-semibold">{areaCm2.toLocaleString(undefined, {maximumFractionDigits: 2})} ตร.ซม.</div>
+                                                                <div className="text-xs text-gray-400 mt-1">÷ 929.0304 = <span className="text-blue-600 font-medium">{areaFt2.toLocaleString(undefined, {maximumFractionDigits: 4})} ตร.ฟุต</span></div>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex flex-col md:flex-row md:justify-between items-center pt-2 gap-2 bg-green-50 p-3 rounded-lg border border-green-100">
+                                                            <span className="font-bold text-green-800">4. สรุปต้นทุนกระดาษ/ใบ:</span>
+                                                            <div className="text-right flex items-center justify-end flex-wrap">
+                                                                <span className="text-sm text-green-700">
+                                                                    {areaFt2.toLocaleString(undefined, {maximumFractionDigits: 4})} ตร.ฟุต <span className="mx-1">×</span> {pPrice} ฿
+                                                                </span>
+                                                                <span className="mx-2 text-green-400">=</span>
+                                                                <span className="font-black text-xl text-green-700 underline decoration-green-300 underline-offset-4">
+                                                                    {rawCost.toLocaleString(undefined, {maximumFractionDigits: 4})} ฿
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+                                    {/* --- จบส่วนแสดงวิธีคำนวณ --- */}
                                 </div>
 
                                 <div className="flex flex-col">
@@ -1825,7 +2140,57 @@ const handleSaveCompanyData = async () => {
                                 </div>
                             )}
                         </div>
-
+                        {/* --- 4.1 ค่าใบมีด (Die Cut Options) --- */}
+                        <div className="mt-8 bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                                ✂️ 4. ค่าใบมีด (Die Cut)
+                            </h3>
+                            <p className="text-sm text-gray-500 mb-4">สามารถเพิ่มค่าใบมีดได้กับกล่องทุกรูปแบบ (ถ้ามีการปั๊มตัดพิเศษ)</p>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                                <div className="md:col-span-2">
+                                    <InputGroup 
+                                        label="เลือกแบบใบมีด (Master Data)" 
+                                        type="select" 
+                                        options={[{label: '-- ไม่ใช้ใบมีด --', value: ''}, ...dieCutMolds.map(d => ({label: `${d.codeName} (${d.price} ฿/ตร.นิ้ว)`, value: d.id}))]}
+                                        value={currentQuot.dieCutId || ''}
+                                        onChange={(v) => setCurrentQuot({...currentQuot, dieCutId: v})}
+                                    />
+                                </div>
+                                <InputGroup 
+                                    label="กว้าง (นิ้ว)" 
+                                    type="number" 
+                                    value={currentQuot.dieCutW || ''} 
+                                    onChange={(v) => setCurrentQuot({...currentQuot, dieCutW: v})} 
+                                />
+                                <InputGroup 
+                                    label="ยาว (นิ้ว)" 
+                                    type="number" 
+                                    value={currentQuot.dieCutL || ''} 
+                                    onChange={(v) => setCurrentQuot({...currentQuot, dieCutL: v})} 
+                                />
+                            </div>
+                            
+                            {/* 👉 กรอบแสดงวิธีคิดราคาใบมีด (แสดงเมื่อกรอกข้อมูลครบ) 👈 */}
+                            {currentQuot.dieCutId && currentQuot.dieCutW && currentQuot.dieCutL && (() => {
+                                const dcW = parseFloat(currentQuot.dieCutW) || 0;
+                                const dcL = parseFloat(currentQuot.dieCutL) || 0;
+                                const mold = dieCutMolds.find(d => d.id.toString() === currentQuot.dieCutId);
+                                const moldPrice = mold ? parseFloat(mold.price) : 0;
+                                const total = (dcW * dcL) * moldPrice;
+                                
+                                return (
+                                    <div className="mt-4 flex flex-wrap items-center gap-3 px-4 py-3 bg-orange-50 border border-orange-100 rounded-lg text-sm text-gray-700">
+                                        <span className="font-semibold text-orange-800">🧮 วิธีคิดราคาใบมีด:</span> 
+                                        <span>{dcW} × {dcL} <span className="text-xs text-gray-500">ตร.นิ้ว</span></span>
+                                        <span className="text-xs text-orange-400">×</span> 
+                                        <span>{moldPrice} <span className="text-xs text-gray-500">฿/ตร.นิ้ว</span></span>
+                                        <span className="text-orange-400">=</span> 
+                                        <span className="font-black text-lg text-orange-700">{total.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
+                                    </div>
+                                );
+                            })()}
+                        </div>
                         {/* 4. Quantity & Logistics (UPDATED) */}
                         <div className="border rounded-lg p-5 border-gray-200 bg-white shadow-sm">
                              <div className="mb-6 pb-2 border-b border-gray-100">
