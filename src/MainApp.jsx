@@ -848,18 +848,16 @@ const calculateTotals = () => {
   };
 
 
-// --- ฟังก์ชันดาวน์โหลด PDF (อัปเดต: พ่วงระบบคำนวณราคาเข้าไปด้วย) ---
+// --- ฟังก์ชันดาวน์โหลด PDF (ฉบับคำนวณใหม่ป้องกันค่าศูนย์) ---
   const handleDownloadPDF = (quot) => {
       console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
 
-      // 1. ดึงชื่อสินค้าและข้อมูลลูกค้า
+      // 1. ดึงข้อมูลประกอบ
       const boxStyle = boxStyles.find(b => b.id?.toString() === quot.boxStyleId?.toString());
       const paper = paperTypes.find(p => p.id?.toString() === quot.paperTypeId?.toString());
-      const boxName = boxStyle?.codeName || 'กล่องลูกฟูกตามสั่ง';
-      const paperName = paper?.codeName || 'ไม่ระบุเกรด';
       const customerFull = customers.find(c => c.id?.toString() === quot.customerId?.toString()) || {};
 
-      // 2. 🧮 คำนวณราคาใหม่เฉพาะสำหรับใบที่กดดาวน์โหลด
+      // 2. คำนวณราคาใหม่ (สำคัญมาก! เพราะกดจากตาราง ค่า State totals ปัจจุบันอาจไม่ใช่ของรายการนี้)
       const W = parseFloat(quot.dimW) || 0;
       const D = parseFloat(quot.dimD) || 0;
       const H = parseFloat(quot.dimH) || 0;
@@ -872,38 +870,38 @@ const calculateTotals = () => {
               const calcArea = new Function('W', 'D', 'H', 'G', 'M', `return ${boxStyle.formula};`);
               areaSqCm = calcArea(W, D, H, G, M);
               if (isNaN(areaSqCm) || areaSqCm < 0) areaSqCm = 0;
-          } catch (error) { areaSqCm = 0; }
+          } catch (e) { areaSqCm = 0; }
       }
       
       const areaSqFt = areaSqCm / 929.0304; 
       const paperPricePerSqFt = paper ? parseFloat(paper.price) : 0;
       const rawBoxCost = areaSqFt * paperPricePerSqFt; 
       const colorCostPerBox = parseFloat(quot.printCostPerBox) || 0;
-      const boxCostTotal = rawBoxCost + colorCostPerBox; // ต้นทุนกล่อง/ใบ
+      const boxCostTotal = rawBoxCost + colorCostPerBox; 
 
+      // หาค่าบล็อคพิมพ์รวม
       const blocks1 = (quot.printBlocks1 || []).reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
       const blocks2 = (quot.printBlocks2 || []).reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
-      const blockCostTotal = blocks1 + blocks2; // ค่าบล็อคทั้งหมด
+      const blockCostTotal = blocks1 + blocks2; 
 
+      // หาค่าใบมีด
       let dieCutCost = 0; 
       if (quot.dieCutId && quot.dieCutW && quot.dieCutL) {
           const dcW = parseFloat(quot.dieCutW) || 0;
           const dcL = parseFloat(quot.dieCutL) || 0;
           const mold = dieCutMolds.find(d => d.id?.toString() === quot.dieCutId?.toString());
           const moldPrice = mold ? parseFloat(mold.price) : 0;
-          dieCutCost = (dcW * dcL) * moldPrice; // ค่าใบมีด
+          dieCutCost = (dcW * dcL) * moldPrice; 
       }
 
       const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
       const setup = parseFloat(quot.setupCost) || 0;
       
-      // สรุปต้นทุนทั้งหมด
       const totalFixedCosts = blockCostTotal + dieCutCost + setup + shipCost;
       const qty = parseInt(quot.quantity) || 1;
       const totalVariableCost = boxCostTotal * qty;
       const grandTotalCost = totalVariableCost + totalFixedCosts;
 
-      // บวกกำไรและหักส่วนลด
       const profitPercent = parseFloat(quot.profitMargin) || 0;
       const profitAmount = grandTotalCost * (profitPercent / 100);
       const totalWithProfit = grandTotalCost + profitAmount;
@@ -912,12 +910,10 @@ const calculateTotals = () => {
       const discountAmount = totalWithProfit * (discountPercent / 100);
       const totalAfterDiscount = totalWithProfit - discountAmount;
 
-      // ภาษี 7%
       const vat = totalAfterDiscount * 0.07;
       const netTotal = totalAfterDiscount + vat;
       const pricePerBox = totalAfterDiscount / qty;
 
-      // แพ็คข้อมูลราคาที่คำนวณได้
       const calculatedTotals = {
           boxCostA: boxCostTotal,
           blockCostB: blockCostTotal,
@@ -930,12 +926,12 @@ const calculateTotals = () => {
           pricePerBox
       };
 
-      // 3. ส่งข้อมูลทั้งหมดรวมถึงราคาที่คำนวณแล้วไปสร้าง PDF
+      // 3. ส่งข้อมูลไปสร้าง PDF
       generateQuotationPDF(
           quot, 
           companyData, 
-          calculatedTotals, // <-- ส่งตัวนี้แทนตัวเก่า
-          { boxName, paperName },
+          calculatedTotals, 
+          { boxName: boxStyle?.codeName, paperName: paper?.codeName },
           customerFull 
       );
   };
