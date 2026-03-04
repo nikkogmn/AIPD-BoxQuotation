@@ -1881,6 +1881,8 @@ const handleConfirmAction = async () => {
                         <thead className="bg-white sticky top-0 shadow-sm z-10">
                             <tr className="text-gray-500 text-xs uppercase tracking-wider bg-gray-50">
                                 <th className="p-4 border-b">ชื่อใบเสนอราคา</th>
+                                {/* 🌟 1. เพิ่มหัวคอลัมน์ขนาดตรงนี้ */}
+                                <th className="p-4 border-b text-center whitespace-nowrap">ขนาด (W x D x H) cm</th>
                                 <th className="p-4 border-b text-right">จำนวน (ใบ)</th>
                                 <th className="p-4 border-b w-40">สถานะ (Status)</th>
                                 <th className="p-4 border-b">สร้างโดย</th>
@@ -1893,23 +1895,27 @@ const handleConfirmAction = async () => {
                         <tbody className="divide-y divide-gray-100">
                             {(!quotationList || quotationList.length === 0) ? (
                                 <tr>
-                                    <td colSpan="8" className="p-10 text-center text-gray-400">
+                                    {/* ปรับ colSpan เป็น 9 ให้ครอบคลุมคอลัมน์ที่เพิ่มมา */}
+                                    <td colSpan="9" className="p-10 text-center text-gray-400">
                                         <div className="flex flex-col items-center gap-2"><FileText size={48} className="text-gray-200" /><p>ยังไม่มีข้อมูลใบเสนอราคา</p></div>
                                     </td>
                                 </tr>
                             ) : (
                                 quotationList.map((quot) => {
-                                    const nameData = generateQuotName(quot); // เรียกใช้ฟังก์ชันชื่อ 2 บรรทัด
+                                    const nameData = generateQuotName(quot);
                                     return (
                                     <tr key={quot.id} className="hover:bg-blue-50/30 transition-colors">
                                         
-                                        {/* โชว์ชื่อ 2 บรรทัด */}
                                         <td className="p-4 max-w-[250px]">
                                             <div className="font-bold text-blue-800 truncate" title={nameData.line1}>{nameData.line1}</div>
                                             <div className="text-xs text-gray-500 truncate mt-0.5" title={nameData.line2}>{nameData.line2}</div>
                                         </td>
 
-                                        {/* คอลัมน์แยก: จำนวน */}
+                                        {/* 🌟 2. เพิ่มข้อมูลขนาด (ดึง W, D, H มาโชว์) */}
+                                        <td className="p-4 text-center text-gray-600 text-sm whitespace-nowrap">
+                                            {quot.dimW || 0} x {quot.dimD || 0} x {quot.dimH || 0}
+                                        </td>
+
                                         <td className="p-4 text-right font-bold text-gray-700">
                                             {(quot.quantity || 0).toLocaleString()}
                                         </td>
