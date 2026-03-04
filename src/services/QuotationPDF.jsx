@@ -28,19 +28,14 @@ const BORDER_COLOR = '#e5e7eb';
 const styles = StyleSheet.create({
   page: { padding: 40, fontFamily: 'THSarabunNew', fontSize: 14, color: '#374151', lineHeight: 1.2 },
   
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 2, borderBottomColor: PRIMARY_COLOR, paddingBottom: 10, marginBottom: 15 },
-  logoImg: { width: 120, height: 60, objectFit: 'contain' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 2, borderBottomColor: PRIMARY_COLOR, paddingBottom: 10, marginBottom: 15 },
+  logoImg: { width: 140, height: 70, objectFit: 'contain' },
   
-  companyInfo: { alignItems: 'flex-end', width: '65%' },
-  companyName: { fontSize: 22, fontWeight: 'bold', color: PRIMARY_COLOR },
-  
-  // 🌟 เพิ่ม Style สำหรับกลุ่มก้อนที่อยู่ เพื่อให้ระยะห่างสวยงาม
-  addressDetailsGroup: {
-    marginTop: 4, // เว้นระยะห่างจากชื่อบริษัทนิดหน่อย
-    alignItems: 'flex-end', // จัดชิดขวาเหมือนเดิม
-  },
-  // ปรับ companyText ให้ไม่มี margin ด้านบน เพราะเราใช้ group จัดการแล้ว
-  companyText: { fontSize: 12 },
+  // 🌟 จัด Group ข้อมูลบริษัทขวามือให้ตรงตาม Mockup 🌟
+  companyInfo: { width: '65%', alignItems: 'flex-end' },
+  companyTextWrapper: { alignItems: 'center' }, // จัดให้บรรทัดกึ่งกลางกันเอง
+  companyName: { fontSize: 24, fontWeight: 'bold', color: PRIMARY_COLOR, marginBottom: 4 },
+  companyText: { fontSize: 13, color: '#4b5563', marginTop: 2 },
   
   docTitle: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 10 },
   appreciationText: { fontSize: 14, textIndent: 20, marginBottom: 15, textAlign: 'justify' },
@@ -64,12 +59,12 @@ const styles = StyleSheet.create({
       justifyContent: 'space-between', 
       width: '45%', 
       backgroundColor: '#f3f4f6',
-      color: '#252424dc',
       padding: 8, 
       fontWeight: 'bold', 
       marginTop: 4 
   },
- 
+  // บังคับตัวหนังสือสีดำให้ Grand total
+  grandTotalText: { color: '#000000', textDecoration: 'underline', textDecorationColor: '#000000' },
 
   signatureSection: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 20 },
   signBox: { width: '40%', alignItems: 'center' },
@@ -80,69 +75,72 @@ const styles = StyleSheet.create({
   signRole: { fontSize: 12, color: '#6b7280', marginTop: 2 }
 });
 
-export const QuotationPDF = ({ quot, company, totals, productNames, customerFull }) => {
-  const factor = totals?.grandTotalCost > 0 ? (totals?.totalAfterDiscount / totals?.grandTotalCost) : 1;
-  const sellingBoxTotal = (totals?.boxCostA * quot.quantity) * factor;
-  const sellingBoxUnit = quot.quantity > 0 ? sellingBoxTotal / quot.quantity : 0;
+export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
+  const factor = totals?.factor || 1;
   const shippingAddress = quot.shippingType === 'pickup' ? 'ลูกค้ามารับเอง (Pick up at Factory)' : (customerFull?.addressShip || '-');
 
   const renderTableRows = () => {
     const rows = [];
     let rowNum = 1;
 
-    // 1. รายการกล่อง
-    rows.push(
-      <View style={styles.tableRow} key="box">
-        <Text style={styles.colNo}>{rowNum++}</Text>
-        <View style={styles.colDesc}>
-          <Text style={{ fontWeight: 'bold' }}>{productNames?.boxName || 'กล่องลูกฟูก'}</Text>
-          <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {productNames?.paperName || '-'}</Text>
-          <Text style={{ fontSize: 12, color: '#6b7280' }}>ขนาด: {quot.dimW} x {quot.dimD} x {quot.dimH} cm</Text>
-        </View>
-        <Text style={styles.colQty}>{(quot.quantity || 0).toLocaleString()}</Text>
-        <Text style={styles.colUnit}>{sellingBoxUnit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-        <Text style={styles.colTotal}>{sellingBoxTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-      </View>
-    );
+    // 🌟 วนลูปสร้างแถวสินค้า ตามจำนวนรายการกล่องที่มี 🌟
+    (totals?.itemsCalc || []).forEach((iCalc, index) => {
+        const sellingBoxTotal = (iCalc.rawBoxCost * iCalc.qty) * factor;
+        const sellingBoxUnit = iCalc.qty > 0 ? sellingBoxTotal / iCalc.qty : 0;
 
-    // 2. รายการบล็อคพิมพ์
-    const allBlocks = [...(quot.printBlocks1 || []), ...(quot.printBlocks2 || [])];
-    allBlocks.forEach((block, idx) => {
-      const rawPrice = parseFloat(block.price) || 0;
-      if (rawPrice > 0) {
-        const sellPrice = rawPrice * factor;
+        // 1. แถวกล่อง
         rows.push(
-          <View style={styles.tableRow} key={`block-${idx}`}>
+          <View style={styles.tableRow} key={`box-${index}`}>
             <Text style={styles.colNo}>{rowNum++}</Text>
             <View style={styles.colDesc}>
-              <Text>ค่าบล็อคแม่พิมพ์ (ขนาด {block.w}x{block.l} นิ้ว)</Text>
+              <Text style={{ fontWeight: 'bold', color: PRIMARY_COLOR }}>รายการที่ {index+1}: {iCalc.boxName}</Text>
+              <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {iCalc.paperName}</Text>
+              <Text style={{ fontSize: 12, color: '#6b7280' }}>ขนาด: {iCalc.dim} cm</Text>
             </View>
-            <Text style={styles.colQty}>1</Text>
-            <Text style={styles.colUnit}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-            <Text style={styles.colTotal}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+            <Text style={styles.colQty}>{iCalc.qty.toLocaleString()}</Text>
+            <Text style={styles.colUnit}>{sellingBoxUnit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+            <Text style={styles.colTotal}>{sellingBoxTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
           </View>
         );
-      }
+
+        // 2. แถวบล็อคพิมพ์ (ของกล่องใบนี้)
+        (iCalc.blocks || []).forEach((block, bIdx) => {
+          const rawPrice = parseFloat(block.price) || 0;
+          if (rawPrice > 0) {
+            const sellPrice = rawPrice * factor;
+            rows.push(
+              <View style={styles.tableRow} key={`block-${index}-${bIdx}`}>
+                <Text style={styles.colNo}></Text>
+                <View style={styles.colDesc}>
+                  <Text style={{ color: '#4b5563' }}>- ค่าบล็อคแม่พิมพ์ (ขนาด {block.w}x{block.l} นิ้ว)</Text>
+                </View>
+                <Text style={styles.colQty}>1</Text>
+                <Text style={styles.colUnit}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                <Text style={styles.colTotal}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+              </View>
+            );
+          }
+        });
+
+        // 3. แถวใบมีด (ของกล่องใบนี้)
+        if (iCalc.dieCutCost > 0) {
+          const sellingDieCut = iCalc.dieCutCost * factor;
+          rows.push(
+            <View style={styles.tableRow} key={`diecut-${index}`}>
+              <Text style={styles.colNo}></Text>
+              <View style={styles.colDesc}>
+                <Text style={{ color: '#4b5563' }}>- ค่าแบบใบมีด</Text>
+                {iCalc.dieCutW && <Text style={{ fontSize: 12, color: '#9ca3af' }}>ขนาด: {iCalc.dieCutW} x {iCalc.dieCutL} นิ้ว</Text>}
+              </View>
+              <Text style={styles.colQty}>1</Text>
+              <Text style={styles.colUnit}>{sellingDieCut.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+              <Text style={styles.colTotal}>{sellingDieCut.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+            </View>
+          );
+        }
     });
 
-    // 3. รายการใบมีด
-    const sellingDieCut = (totals?.dieCutC || 0) * factor;
-    if (sellingDieCut > 0) {
-      rows.push(
-        <View style={styles.tableRow} key="diecut">
-          <Text style={styles.colNo}>{rowNum++}</Text>
-          <View style={styles.colDesc}>
-            <Text>ค่าแบบใบมีดปั๊มตัด (Die Cut Mold)</Text>
-            {quot.dieCutW && <Text style={{ fontSize: 12, color: '#6b7280' }}>ขนาด: {quot.dieCutW} x {quot.dieCutL} นิ้ว</Text>}
-          </View>
-          <Text style={styles.colQty}>1</Text>
-          <Text style={styles.colUnit}>{sellingDieCut.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-          <Text style={styles.colTotal}>{sellingDieCut.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-        </View>
-      );
-    }
-
-    // 4. ค่า Setup / ค่าจัดส่ง
+    // 4. ค่า Setup ส่วนกลาง
     const sellingSetup = (totals?.setupCost || 0) * factor;
     if (sellingSetup > 0) {
       rows.push(
@@ -156,6 +154,7 @@ export const QuotationPDF = ({ quot, company, totals, productNames, customerFull
       );
     }
 
+    // 5. ค่าจัดส่งส่วนกลาง
     const sellingShip = (totals?.shipCost || 0) * factor;
     if (sellingShip > 0) {
       rows.push(
@@ -182,16 +181,12 @@ export const QuotationPDF = ({ quot, company, totals, productNames, customerFull
             {company?.logoUrl ? <Image style={styles.logoImg} src={company.logoUrl} /> : <Text style={{ color: '#9ca3af', fontStyle: 'italic' }}>[ ไม่มีโลโก้ ]</Text>}
           </View>
           <View style={styles.companyInfo}>
-            <Text style={styles.companyName}>{company?.nameTH || 'บริษัท สมาร์ทบ็อกซ์ จำกัด'}</Text>
-            <Text style={styles.companyText}></Text>
-            {/* 🌟🌟🌟 แก้ไขตรงนี้: เอา View มาครอบ 2 บรรทัดนี้ไว้ด้วยกัน 🌟🌟🌟 */}
-            <View style={styles.addressDetailsGroup}>
-              <Text style={styles.companyText}></Text>
-                <Text style={styles.companyText}>{company?.addressTH || '-'}</Text>
-                <Text style={styles.companyText}>เลขประจำตัวผู้เสียภาษี: {company?.taxId || '-'} | โทร: {company?.phone || '-'}</Text>
+            {/* 🌟 Wrapper สำหรับรัดข้อความให้กึ่งกลางกันเอง */}
+            <View style={styles.companyTextWrapper}>
+              <Text style={styles.companyName}>{company?.nameTH || 'บริษัท สมาร์ทบ็อกซ์ จำกัด'}</Text>
+              <Text style={styles.companyText}>ที่อยู่: {company?.addressTH || '-'}</Text>
+              <Text style={styles.companyText}>เลขประจำตัวผู้เสียภาษี: {company?.taxId || '-'} | โทร: {company?.phone || '-'}</Text>
             </View>
-            {/* 🌟🌟🌟 สิ้นสุดการครอบ 🌟🌟🌟 */}
-
           </View>
         </View>
 
@@ -249,9 +244,7 @@ export const QuotationPDF = ({ quot, company, totals, productNames, customerFull
         {/* ลายเซ็น */}
         <View style={styles.signatureSection}>
           <View style={styles.signBox}>
-            <View style={styles.signImageContainer}>
-              {/* ฝั่งลูกค้าเว้นว่างไว้สำหรับเซ็น */}
-            </View>
+            <View style={styles.signImageContainer}></View>
             <View style={styles.signLine}></View>
             <Text style={styles.signName}>ผู้สั่งซื้อ (Customer)</Text>
             <Text style={styles.signRole}>วันที่: ....../....../......</Text>
