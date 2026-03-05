@@ -2,7 +2,6 @@
 import React from 'react';
 import { Page, Text, View, Document, StyleSheet, Font, Image } from '@react-pdf/renderer';
 
-// ลงทะเบียนฟอนต์ไทย
 Font.register({
   family: 'THSarabunNew',
   fonts: [
@@ -11,7 +10,6 @@ Font.register({
   ]
 });
 
-// ฟังก์ชันแปลงวันที่
 const formatThaiDate = (dateStr, addDays = 0) => {
   if (!dateStr) return '-';
   const d = new Date(dateStr.replace(' ', 'T'));
@@ -21,23 +19,22 @@ const formatThaiDate = (dateStr, addDays = 0) => {
   return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
 };
 
-// 🎨 Theme Colors
 const PRIMARY_COLOR = '#be123c'; 
 const BORDER_COLOR = '#e5e7eb';
 
 const styles = StyleSheet.create({
-  page: { padding: 40, fontFamily: 'THSarabunNew', fontSize: 14, color: '#374151', lineHeight: 1.2 },
+  // 🌟 ปรับ paddingTop เผื่อที่ให้หัวกระดาษ และ paddingBottom เผื่อที่ให้เลขหน้า
+  page: { paddingTop: 130, paddingBottom: 60, paddingHorizontal: 40, fontFamily: 'THSarabunNew', fontSize: 14, color: '#374151', lineHeight: 1.2 },
   
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 2, borderBottomColor: PRIMARY_COLOR, paddingBottom: 10, marginBottom: 15 },
+  // 🌟 บังคับหัวกระดาษให้อยู่ตำแหน่งเดิมเสมอทุกหน้า
+  headerFixed: { position: 'absolute', top: 40, left: 40, right: 40, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 2, borderBottomColor: PRIMARY_COLOR, paddingBottom: 10 },
   logoImg: { width: 140, height: 70, objectFit: 'contain' },
-  
-  // 🌟 จัด Group ข้อมูลบริษัทขวามือให้ตรงตาม Mockup 🌟
   companyInfo: { width: '65%', alignItems: 'flex-end' },
-  companyTextWrapper: { alignItems: 'center' }, // จัดให้บรรทัดกึ่งกลางกันเอง
+  companyTextWrapper: { alignItems: 'center' },
   companyName: { fontSize: 24, fontWeight: 'bold', color: PRIMARY_COLOR, marginBottom: 4 },
   companyText: { fontSize: 13, color: '#4b5563', marginTop: 2 },
   
-  docTitle: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 10 },
+  docTitle: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 10, marginTop: 10 },
   appreciationText: { fontSize: 14, textIndent: 20, marginBottom: 15, textAlign: 'justify' },
 
   infoBox: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, backgroundColor: '#fff1f2', padding: 12, borderRadius: 6, borderWidth: 1, borderColor: '#ffe4e6' },
@@ -54,16 +51,7 @@ const styles = StyleSheet.create({
 
   summaryBox: { alignItems: 'flex-end', marginBottom: 30 },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', width: '45%', marginBottom: 4 },
-  grandTotalRow: { 
-      flexDirection: 'row', 
-      justifyContent: 'space-between', 
-      width: '45%', 
-      backgroundColor: '#f3f4f6',
-      padding: 8, 
-      fontWeight: 'bold', 
-      marginTop: 4 
-  },
-  // บังคับตัวหนังสือสีดำให้ Grand total
+  grandTotalRow: { flexDirection: 'row', justifyContent: 'space-between', width: '45%', backgroundColor: '#f3f4f6', padding: 8, fontWeight: 'bold', marginTop: 4 },
   grandTotalText: { color: '#000000', textDecoration: 'underline', textDecorationColor: '#000000' },
 
   signatureSection: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 20 },
@@ -72,7 +60,10 @@ const styles = StyleSheet.create({
   signImg: { width: 120, height: 50, objectFit: 'contain', position: 'absolute', bottom: 5 },
   signLine: { width: '100%', borderBottomWidth: 1, borderBottomColor: '#374151', borderStyle: 'solid' },
   signName: { fontWeight: 'bold', marginTop: 8, fontSize: 14 },
-  signRole: { fontSize: 12, color: '#6b7280', marginTop: 2 }
+  signRole: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+
+  // 🌟 เลขหน้า มุมขวาล่าง
+  pageNumber: { position: 'absolute', bottom: 30, right: 40, fontSize: 12, color: '#6b7280', fontFamily: 'THSarabunNew' }
 });
 
 export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
@@ -80,22 +71,23 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
   const shippingAddress = quot.shippingType === 'pickup' ? 'ลูกค้ามารับเอง (Pick up at Factory)' : (customerFull?.addressShip || '-');
 
   const renderTableRows = () => {
-    const rows = [];
+    const groups = [];
     let rowNum = 1;
 
-    // 🌟 วนลูปสร้างแถวสินค้า ตามจำนวนรายการกล่องที่มี 🌟
+    // 🌟 วนลูปกล่องแต่ละชุด และมัดรวมกันด้วย wrap={false} เพื่อไม่ให้แตกหน้า 🌟
     (totals?.itemsCalc || []).forEach((iCalc, index) => {
         const sellingBoxTotal = (iCalc.rawBoxCost * iCalc.qty) * factor;
         const sellingBoxUnit = iCalc.qty > 0 ? sellingBoxTotal / iCalc.qty : 0;
+        
+        const currentGroupRows = [];
 
         // 1. แถวกล่อง
-        rows.push(
+        currentGroupRows.push(
           <View style={styles.tableRow} key={`box-${index}`}>
             <Text style={styles.colNo}>{rowNum++}</Text>
             <View style={styles.colDesc}>
               <Text style={{ fontWeight: 'bold', color: PRIMARY_COLOR }}>รายการที่ {index+1}: {iCalc.boxName}</Text>
-              <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {iCalc.paperName}</Text>
-              <Text style={{ fontSize: 12, color: '#6b7280' }}>ขนาด: {iCalc.dim} cm</Text>
+              <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {iCalc.paperName} | ขนาด: {iCalc.dim} cm</Text>
             </View>
             <Text style={styles.colQty}>{iCalc.qty.toLocaleString()}</Text>
             <Text style={styles.colUnit}>{sellingBoxUnit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
@@ -103,12 +95,12 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
           </View>
         );
 
-        // 2. แถวบล็อคพิมพ์ (ของกล่องใบนี้)
+        // 2. แถวบล็อคพิมพ์
         (iCalc.blocks || []).forEach((block, bIdx) => {
           const rawPrice = parseFloat(block.price) || 0;
           if (rawPrice > 0) {
             const sellPrice = rawPrice * factor;
-            rows.push(
+            currentGroupRows.push(
               <View style={styles.tableRow} key={`block-${index}-${bIdx}`}>
                 <Text style={styles.colNo}></Text>
                 <View style={styles.colDesc}>
@@ -122,14 +114,14 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
           }
         });
 
-        // 3. แถวใบมีด (ของกล่องใบนี้)
+        // 3. แถวใบมีด
         if (iCalc.dieCutCost > 0) {
           const sellingDieCut = iCalc.dieCutCost * factor;
-          rows.push(
+          currentGroupRows.push(
             <View style={styles.tableRow} key={`diecut-${index}`}>
               <Text style={styles.colNo}></Text>
               <View style={styles.colDesc}>
-                <Text style={{ color: '#4b5563' }}>- ค่าแบบใบมีด</Text>
+                <Text style={{ color: '#4b5563' }}>- ค่าแบบใบมีดปั๊มตัด</Text>
                 {iCalc.dieCutW && <Text style={{ fontSize: 12, color: '#9ca3af' }}>ขนาด: {iCalc.dieCutW} x {iCalc.dieCutL} นิ้ว</Text>}
               </View>
               <Text style={styles.colQty}>1</Text>
@@ -138,12 +130,20 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
             </View>
           );
         }
+
+        // 🌟 รัด Group เพื่อให้ กล่อง+บล็อค+ใบมีด ไปอยู่หน้าเดียวกันเสมอ
+        groups.push(
+            <View wrap={false} style={{ flexDirection: 'column' }} key={`group-${index}`}>
+                {currentGroupRows}
+            </View>
+        );
     });
 
-    // 4. ค่า Setup ส่วนกลาง
+    // 4. ค่า Setup / ค่าจัดส่ง (รัดรวมกันไว้ท้ายตาราง)
+    const globalRows = [];
     const sellingSetup = (totals?.setupCost || 0) * factor;
     if (sellingSetup > 0) {
-      rows.push(
+      globalRows.push(
         <View style={styles.tableRow} key="setup">
           <Text style={styles.colNo}>{rowNum++}</Text>
           <View style={styles.colDesc}><Text>ค่าบริการเตรียมเครื่อง (Setup Cost)</Text></View>
@@ -154,10 +154,9 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
       );
     }
 
-    // 5. ค่าจัดส่งส่วนกลาง
     const sellingShip = (totals?.shipCost || 0) * factor;
     if (sellingShip > 0) {
-      rows.push(
+      globalRows.push(
         <View style={styles.tableRow} key="ship">
           <Text style={styles.colNo}>{rowNum++}</Text>
           <View style={styles.colDesc}><Text>ค่าบริการจัดส่ง (Shipping Cost)</Text></View>
@@ -168,20 +167,27 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
       );
     }
 
-    return rows;
+    if (globalRows.length > 0) {
+        groups.push(
+            <View wrap={false} style={{ flexDirection: 'column' }} key="global-costs">
+                {globalRows}
+            </View>
+        );
+    }
+
+    return groups;
   };
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
         
-        {/* Header */}
-        <View style={styles.header}>
+        {/* 🌟 1. หัวกระดาษ (ใช้ fixed เพื่อปั๊มออกทุกหน้า) 🌟 */}
+        <View style={styles.headerFixed} fixed>
           <View style={{ width: '35%' }}>
             {company?.logoUrl ? <Image style={styles.logoImg} src={company.logoUrl} /> : <Text style={{ color: '#9ca3af', fontStyle: 'italic' }}>[ ไม่มีโลโก้ ]</Text>}
           </View>
           <View style={styles.companyInfo}>
-            {/* 🌟 Wrapper สำหรับรัดข้อความให้กึ่งกลางกันเอง */}
             <View style={styles.companyTextWrapper}>
               <Text style={styles.companyName}>{company?.nameTH || 'บริษัท สมาร์ทบ็อกซ์ จำกัด'}</Text>
               <Text style={styles.companyText}>ที่อยู่: {company?.addressTH || '-'}</Text>
@@ -190,6 +196,7 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
           </View>
         </View>
 
+        {/* 🌟 เนื้อหาเริ่มตรงนี้ (จะถูกเว้นที่ไว้ 130px โดยอัตโนมัติจาก paddingTop) 🌟 */}
         <Text style={styles.docTitle}>ใบเสนอราคา (QUOTATION)</Text>
 
         <Text style={styles.appreciationText}>
@@ -214,7 +221,8 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
 
         {/* ตารางสินค้า */}
         <View style={styles.table}>
-          <View style={[styles.tableRow, styles.tableHeader]}>
+          {/* 🌟 หัวตาราง (ใช้ fixed เพื่อปั๊มออกทุกครั้งที่ขึ้นหน้าใหม่) 🌟 */}
+          <View style={[styles.tableRow, styles.tableHeader]} fixed>
             <Text style={styles.colNo}>ลำดับ</Text>
             <Text style={styles.colDesc}>รายการ (Description)</Text>
             <Text style={styles.colQty}>จำนวน</Text>
@@ -225,40 +233,48 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
           {renderTableRows()}
         </View>
 
-        {/* สรุปยอดเงิน */}
-        <View style={styles.summaryBox}>
-          <View style={styles.summaryRow}>
-            <Text>รวมเป็นเงิน (ราคาก่อน VAT):</Text>
-            <Text>{(totals?.totalAfterDiscount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text>ภาษีมูลค่าเพิ่ม (VAT 7%):</Text>
-            <Text>{(totals?.netTotal - totals?.totalAfterDiscount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-          </View>
-          <View style={styles.grandTotalRow}>
-            <Text style={styles.grandTotalText}>ยอดรวมทั้งสิ้น (Grand Total):</Text>
-            <Text style={styles.grandTotalText}>{(totals?.netTotal || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</Text>
-          </View>
-        </View>
-
-        {/* ลายเซ็น */}
-        <View style={styles.signatureSection}>
-          <View style={styles.signBox}>
-            <View style={styles.signImageContainer}></View>
-            <View style={styles.signLine}></View>
-            <Text style={styles.signName}>ผู้สั่งซื้อ (Customer)</Text>
-            <Text style={styles.signRole}>วันที่: ....../....../......</Text>
-          </View>
-
-          <View style={styles.signBox}>
-            <View style={styles.signImageContainer}>
-              {company?.signatureUrl && <Image style={styles.signImg} src={company.signatureUrl} />}
+        {/* 🌟 3. รัด Group สรุปเงิน และ ลายเซ็น ไม่ให้แยกหน้ากัน ทำให้ถูกผลักไปอยู่หน้าสุดท้ายด้วยกันเสมอ 🌟 */}
+        <View wrap={false} style={{ marginTop: 30 }}>
+            <View style={styles.summaryBox}>
+                <View style={styles.summaryRow}>
+                    <Text>รวมเป็นเงิน (ราคาก่อน VAT):</Text>
+                    <Text>{(totals?.totalAfterDiscount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                    <Text>ภาษีมูลค่าเพิ่ม (VAT 7%):</Text>
+                    <Text>{(totals?.netTotal - totals?.totalAfterDiscount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                </View>
+                <View style={styles.grandTotalRow}>
+                    <Text style={styles.grandTotalText}>ยอดรวมทั้งสิ้น (Grand Total):</Text>
+                    <Text style={styles.grandTotalText}>{(totals?.netTotal || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</Text>
+                </View>
             </View>
-            <View style={styles.signLine}></View>
-            <Text style={styles.signName}>({company?.approverTH || 'ผู้มีอำนาจลงนาม'})</Text>
-            <Text style={styles.signRole}>ผู้อนุมัติ (Authorized Signature)</Text>
-          </View>
+
+            <View style={styles.signatureSection}>
+                <View style={styles.signBox}>
+                    <View style={styles.signImageContainer}></View>
+                    <View style={styles.signLine}></View>
+                    <Text style={styles.signName}>ผู้สั่งซื้อ (Customer)</Text>
+                    <Text style={styles.signRole}>วันที่: ....../....../......</Text>
+                </View>
+
+                <View style={styles.signBox}>
+                    <View style={styles.signImageContainer}>
+                        {company?.signatureUrl && <Image style={styles.signImg} src={company.signatureUrl} />}
+                    </View>
+                    <View style={styles.signLine}></View>
+                    <Text style={styles.signName}>({company?.approverTH || 'ผู้มีอำนาจลงนาม'})</Text>
+                    <Text style={styles.signRole}>ผู้อนุมัติ (Authorized Signature)</Text>
+                </View>
+            </View>
         </View>
+
+        {/* 🌟 4. แสดงเลขหน้า มุมขวาล่าง (ใช้ render prop ดึงจำนวนหน้า) 🌟 */}
+        <Text 
+          style={styles.pageNumber} 
+          render={({ pageNumber, totalPages }) => (`หน้าที่ ${pageNumber} / ${totalPages}`)} 
+          fixed 
+        />
 
       </Page>
     </Document>

@@ -828,7 +828,7 @@ const fetchAllMasterData = async () => {
       }
   };
 
-// --- ฟังก์ชันสร้างชื่อไฟล์สำหรับการ Export PDF (ตาม Format ใหม่) ---
+// --- ฟังก์ชันสร้างชื่อไฟล์สำหรับการ Export PDF (ตาม Format เดิมที่ถูกต้อง) ---
   const generateExportFileName = (quot) => {
       // 1. ทำความสะอาดชื่อลูกค้า (ตัดอักขระพิเศษที่ห้ามใช้ในชื่อไฟล์ทิ้ง)
       const rawCusName = customers.find(c => c.id === quot.customerId)?.name || 'UnknownCustomer';
@@ -850,18 +850,17 @@ const fetchAllMasterData = async () => {
       const lastEditStr = `${editDD}${editMMM}${editYYYY}${editHH}${editMin}`;
 
       // ผลลัพธ์: AIPD_QUOTATION_ชื่อลูกค้า_ddDDMMMYYYYhhmm
-      return `AIPD_QUOTATION_${safeCusName}_${createDay}${lastEditStr}.pdf`; // เติม .pdf เผื่อไว้
+      return `AIPD_QUOTATION_${safeCusName}_${createDay}${lastEditStr}.pdf`; 
   };
 
 
-
-// --- ฟังก์ชันดาวน์โหลด PDF (อัปเดตรองรับ Multi-items) ---
+// --- ฟังก์ชันดาวน์โหลด PDF (ส่งข้อมูลให้ครบ 6 ลำดับ ป้องกันข้อมูลลูกค้าหาย) ---
   const handleDownloadPDF = (quot) => {
       console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
       const exportFileName = generateExportFileName(quot);
       const customerFull = customers.find(c => c.id?.toString() === quot.customerId?.toString()) || {};
 
-      // 1. จำลองการคำนวณใหม่สำหรับเอกสารนี้ (เพราะ quot อาจเป็นข้อมูลเก่าที่ดึงจากตาราง)
+      // 1. จำลองการคำนวณใหม่สำหรับเอกสารนี้เพื่อแยกรายการ
       let totalVar = 0, totalFixed = 0;
       const itemsCalc = [];
       
@@ -891,11 +890,10 @@ const fetchAllMasterData = async () => {
           totalVar += (rawBoxCost * qty);
           totalFixed += blockCost + dieCutCost;
 
-          // แพ็คข้อมูลรายไอเทมเตรียมส่งให้ PDF
           itemsCalc.push({
               boxName: boxStyle?.codeName || 'ไม่ระบุรูปแบบ',
               paperName: paper?.codeName || '-',
-              dim: `${item.dimW}x${item.dimD}x${item.dimH}`,
+              dim: `${item.dimW||0}x${item.dimD||0}x${item.dimH||0}`,
               qty,
               rawBoxCost,
               blocks: [...(item.printBlocks1||[]), ...(item.printBlocks2||[])],
@@ -912,7 +910,6 @@ const fetchAllMasterData = async () => {
       const totalAfterDiscount = withProfit - (withProfit * ((parseFloat(quot.discount)||0)/100));
       const netTotal = totalAfterDiscount * 1.07;
       
-      // ตัวคูณกระจายกำไร/ส่วนลด
       const factor = grandTotal > 0 ? (totalAfterDiscount / grandTotal) : 1;
 
       const calculatedTotals = {
@@ -924,14 +921,15 @@ const fetchAllMasterData = async () => {
           factor
       };
 
-      // 2. ส่งข้อมูลไปสร้าง PDF
+      // 2. ส่งข้อมูลไปสร้าง PDF 
+      // 🌟🌟🌟 แก้ไขแล้ว: คืนค่า {} ไว้ในช่องที่ 4 เพื่อให้ข้อมูลลูกค้าและชื่อไฟล์ไม่ขยับผิดช่อง 🌟🌟🌟
       generateQuotationPDF(
           quot, 
           companyData, 
           calculatedTotals, 
-          {}, // productNames ไม่ได้ใช้แล้ว 
-          customerFull,
-          exportFileName 
+          {},             // <--- ตัวที่ 4: ใส่ {} ล็อคช่องไว้ 
+          customerFull,   // <--- ตัวที่ 5: ข้อมูลลูกค้า จะได้ไปแสดงบน PDF ถูกต้อง
+          exportFileName  // <--- ตัวที่ 6: ชื่อไฟล์จะได้เซฟออกมาถูกต้อง
       );
   };
 
