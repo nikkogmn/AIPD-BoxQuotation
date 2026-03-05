@@ -23,10 +23,8 @@ const PRIMARY_COLOR = '#be123c';
 const BORDER_COLOR = '#e5e7eb';
 
 const styles = StyleSheet.create({
-  // 🌟 ปรับ paddingTop เผื่อที่ให้หัวกระดาษ และ paddingBottom เผื่อที่ให้เลขหน้า
-  page: { paddingTop: 130, paddingBottom: 60, paddingHorizontal: 40, fontFamily: 'THSarabunNew', fontSize: 14, color: '#374151', lineHeight: 1.2 },
+  page: { paddingTop: 130, paddingBottom: 80, paddingHorizontal: 40, fontFamily: 'THSarabunNew', fontSize: 14, color: '#374151', lineHeight: 1.2 },
   
-  // 🌟 บังคับหัวกระดาษให้อยู่ตำแหน่งเดิมเสมอทุกหน้า
   headerFixed: { position: 'absolute', top: 40, left: 40, right: 40, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', borderBottomWidth: 2, borderBottomColor: PRIMARY_COLOR, paddingBottom: 10 },
   logoImg: { width: 140, height: 70, objectFit: 'contain' },
   companyInfo: { width: '65%', alignItems: 'flex-end' },
@@ -62,7 +60,6 @@ const styles = StyleSheet.create({
   signName: { fontWeight: 'bold', marginTop: 8, fontSize: 14 },
   signRole: { fontSize: 12, color: '#6b7280', marginTop: 2 },
 
-  // 🌟 เลขหน้า มุมขวาล่าง
   pageNumber: { position: 'absolute', bottom: 30, right: 40, fontSize: 12, color: '#6b7280', fontFamily: 'THSarabunNew' }
 });
 
@@ -71,118 +68,141 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
   const shippingAddress = quot.shippingType === 'pickup' ? 'ลูกค้ามารับเอง (Pick up at Factory)' : (customerFull?.addressShip || '-');
 
   const renderTableRows = () => {
-    const groups = [];
+    const items = totals?.itemsCalc || [];
+    
+    // 🌟 หั่นข้อมูลเป็นแพ็ค แพ็คละ 2 รายการ 🌟
+    const chunkedItems = [];
+    for (let i = 0; i < items.length; i += 2) {
+      chunkedItems.push(items.slice(i, i + 2));
+    }
+
     let rowNum = 1;
+    const allPages = [];
 
-    // 🌟 วนลูปกล่องแต่ละชุด และมัดรวมกันด้วย wrap={false} เพื่อไม่ให้แตกหน้า 🌟
-    (totals?.itemsCalc || []).forEach((iCalc, index) => {
-        const sellingBoxTotal = (iCalc.rawBoxCost * iCalc.qty) * factor;
-        const sellingBoxUnit = iCalc.qty > 0 ? sellingBoxTotal / iCalc.qty : 0;
-        
-        const currentGroupRows = [];
+    // วนลูปตามจำนวนแพ็ค
+    chunkedItems.forEach((chunk, chunkIndex) => {
+        const currentChunkRows = [];
 
-        // 1. แถวกล่อง
-        currentGroupRows.push(
-          <View style={styles.tableRow} key={`box-${index}`}>
-            <Text style={styles.colNo}>{rowNum++}</Text>
-            <View style={styles.colDesc}>
-              <Text style={{ fontWeight: 'bold', color: PRIMARY_COLOR }}>รายการที่ {index+1}: {iCalc.boxName}</Text>
-              <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {iCalc.paperName} | ขนาด: {iCalc.dim} cm</Text>
-            </View>
-            <Text style={styles.colQty}>{iCalc.qty.toLocaleString()}</Text>
-            <Text style={styles.colUnit}>{sellingBoxUnit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-            <Text style={styles.colTotal}>{sellingBoxTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-          </View>
-        );
+        // วนลูปกล่องภายในแพ็ค (ไม่เกิน 2 กล่อง)
+        chunk.forEach((iCalc) => {
+            const sellingBoxTotal = (iCalc.rawBoxCost * iCalc.qty) * factor;
+            const sellingBoxUnit = iCalc.qty > 0 ? sellingBoxTotal / iCalc.qty : 0;
+            
+            const itemGroupRows = [];
 
-        // 2. แถวบล็อคพิมพ์
-        (iCalc.blocks || []).forEach((block, bIdx) => {
-          const rawPrice = parseFloat(block.price) || 0;
-          if (rawPrice > 0) {
-            const sellPrice = rawPrice * factor;
-            currentGroupRows.push(
-              <View style={styles.tableRow} key={`block-${index}-${bIdx}`}>
-                <Text style={styles.colNo}></Text>
+            // 1. แถวกล่อง
+            itemGroupRows.push(
+              <View style={styles.tableRow} key={`box-${rowNum}`}>
+                <Text style={styles.colNo}>{rowNum}</Text>
                 <View style={styles.colDesc}>
-                  <Text style={{ color: '#4b5563' }}>- ค่าบล็อคแม่พิมพ์ (ขนาด {block.w}x{block.l} นิ้ว)</Text>
+                  <Text style={{ fontWeight: 'bold', color: PRIMARY_COLOR }}>รายการที่ {rowNum}: {iCalc.boxName}</Text>
+                  <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {iCalc.paperName} | ขนาด: {iCalc.dim} cm</Text>
                 </View>
-                <Text style={styles.colQty}>1</Text>
-                <Text style={styles.colUnit}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-                <Text style={styles.colTotal}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                <Text style={styles.colQty}>{iCalc.qty.toLocaleString()}</Text>
+                <Text style={styles.colUnit}>{sellingBoxUnit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                <Text style={styles.colTotal}>{sellingBoxTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
               </View>
             );
-          }
+
+            // 2. แถวบล็อคพิมพ์
+            (iCalc.blocks || []).forEach((block, bIdx) => {
+              const rawPrice = parseFloat(block.price) || 0;
+              if (rawPrice > 0) {
+                const sellPrice = rawPrice * factor;
+                itemGroupRows.push(
+                  <View style={styles.tableRow} key={`block-${rowNum}-${bIdx}`}>
+                    <Text style={styles.colNo}></Text>
+                    <View style={styles.colDesc}>
+                      <Text style={{ color: '#4b5563' }}>- ค่าบล็อคแม่พิมพ์ (ขนาด {block.w}x{block.l} นิ้ว)</Text>
+                    </View>
+                    <Text style={styles.colQty}>1</Text>
+                    <Text style={styles.colUnit}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                    <Text style={styles.colTotal}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                  </View>
+                );
+              }
+            });
+
+            // 3. แถวใบมีด
+            if (iCalc.dieCutCost > 0) {
+              const sellingDieCut = iCalc.dieCutCost * factor;
+              itemGroupRows.push(
+                <View style={styles.tableRow} key={`diecut-${rowNum}`}>
+                  <Text style={styles.colNo}></Text>
+                  <View style={styles.colDesc}>
+                    <Text style={{ color: '#4b5563' }}>- ค่าแบบใบมีดปั๊มตัด</Text>
+                    {iCalc.dieCutW && <Text style={{ fontSize: 12, color: '#9ca3af' }}>ขนาด: {iCalc.dieCutW} x {iCalc.dieCutL} นิ้ว</Text>}
+                  </View>
+                  <Text style={styles.colQty}>1</Text>
+                  <Text style={styles.colUnit}>{sellingDieCut.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                  <Text style={styles.colTotal}>{sellingDieCut.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                </View>
+              );
+            }
+
+            // ยัดก้อนของสินค้านี้ลงไปใน Chunk ปัจจุบัน (ใช้ wrap=false ป้องกันฉีกขาดภายในไอเทมเดียวกัน)
+            currentChunkRows.push(
+                <View wrap={false} style={{ flexDirection: 'column' }} key={`group-${rowNum}`}>
+                    {itemGroupRows}
+                </View>
+            );
+            
+            rowNum++;
         });
 
-        // 3. แถวใบมีด
-        if (iCalc.dieCutCost > 0) {
-          const sellingDieCut = iCalc.dieCutCost * factor;
-          currentGroupRows.push(
-            <View style={styles.tableRow} key={`diecut-${index}`}>
-              <Text style={styles.colNo}></Text>
-              <View style={styles.colDesc}>
-                <Text style={{ color: '#4b5563' }}>- ค่าแบบใบมีดปั๊มตัด</Text>
-                {iCalc.dieCutW && <Text style={{ fontSize: 12, color: '#9ca3af' }}>ขนาด: {iCalc.dieCutW} x {iCalc.dieCutL} นิ้ว</Text>}
-              </View>
-              <Text style={styles.colQty}>1</Text>
-              <Text style={styles.colUnit}>{sellingDieCut.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-              <Text style={styles.colTotal}>{sellingDieCut.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-            </View>
-          );
+        // 4. ถ้าเป็น "แพ็คสุดท้าย" ให้บวกค่าจัดส่งและค่า Setup เข้าไป
+        if (chunkIndex === chunkedItems.length - 1) {
+            const globalRows = [];
+            const sellingSetup = (totals?.setupCost || 0) * factor;
+            if (sellingSetup > 0) {
+              globalRows.push(
+                <View style={styles.tableRow} key="setup">
+                  <Text style={styles.colNo}>{rowNum++}</Text>
+                  <View style={styles.colDesc}><Text>ค่าบริการเตรียมเครื่อง (Setup Cost)</Text></View>
+                  <Text style={styles.colQty}>1</Text>
+                  <Text style={styles.colUnit}>{sellingSetup.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                  <Text style={styles.colTotal}>{sellingSetup.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                </View>
+              );
+            }
+
+            const sellingShip = (totals?.shipCost || 0) * factor;
+            if (sellingShip > 0) {
+              globalRows.push(
+                <View style={styles.tableRow} key="ship">
+                  <Text style={styles.colNo}>{rowNum++}</Text>
+                  <View style={styles.colDesc}><Text>ค่าบริการจัดส่ง (Shipping Cost)</Text></View>
+                  <Text style={styles.colQty}>1</Text>
+                  <Text style={styles.colUnit}>{sellingShip.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                  <Text style={styles.colTotal}>{sellingShip.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                </View>
+              );
+            }
+
+            if (globalRows.length > 0) {
+                currentChunkRows.push(
+                    <View wrap={false} style={{ flexDirection: 'column' }} key="global-costs">
+                        {globalRows}
+                    </View>
+                );
+            }
         }
 
-        // 🌟 รัด Group เพื่อให้ กล่อง+บล็อค+ใบมีด ไปอยู่หน้าเดียวกันเสมอ
-        groups.push(
-            <View wrap={false} style={{ flexDirection: 'column' }} key={`group-${index}`}>
-                {currentGroupRows}
+        // 🌟 แทรกคำสั่ง Break หากไม่ใช่แพ็คแรกสุด 🌟
+        allPages.push(
+            <View key={`chunk-${chunkIndex}`} break={chunkIndex > 0}>
+                {currentChunkRows}
             </View>
         );
     });
 
-    // 4. ค่า Setup / ค่าจัดส่ง (รัดรวมกันไว้ท้ายตาราง)
-    const globalRows = [];
-    const sellingSetup = (totals?.setupCost || 0) * factor;
-    if (sellingSetup > 0) {
-      globalRows.push(
-        <View style={styles.tableRow} key="setup">
-          <Text style={styles.colNo}>{rowNum++}</Text>
-          <View style={styles.colDesc}><Text>ค่าบริการเตรียมเครื่อง (Setup Cost)</Text></View>
-          <Text style={styles.colQty}>1</Text>
-          <Text style={styles.colUnit}>{sellingSetup.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-          <Text style={styles.colTotal}>{sellingSetup.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-        </View>
-      );
-    }
-
-    const sellingShip = (totals?.shipCost || 0) * factor;
-    if (sellingShip > 0) {
-      globalRows.push(
-        <View style={styles.tableRow} key="ship">
-          <Text style={styles.colNo}>{rowNum++}</Text>
-          <View style={styles.colDesc}><Text>ค่าบริการจัดส่ง (Shipping Cost)</Text></View>
-          <Text style={styles.colQty}>1</Text>
-          <Text style={styles.colUnit}>{sellingShip.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-          <Text style={styles.colTotal}>{sellingShip.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-        </View>
-      );
-    }
-
-    if (globalRows.length > 0) {
-        groups.push(
-            <View wrap={false} style={{ flexDirection: 'column' }} key="global-costs">
-                {globalRows}
-            </View>
-        );
-    }
-
-    return groups;
+    return allPages;
   };
 
   return (
     <Document>
       <Page size="A4" style={styles.page}>
         
-        {/* 🌟 1. หัวกระดาษ (ใช้ fixed เพื่อปั๊มออกทุกหน้า) 🌟 */}
         <View style={styles.headerFixed} fixed>
           <View style={{ width: '35%' }}>
             {company?.logoUrl ? <Image style={styles.logoImg} src={company.logoUrl} /> : <Text style={{ color: '#9ca3af', fontStyle: 'italic' }}>[ ไม่มีโลโก้ ]</Text>}
@@ -196,7 +216,6 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
           </View>
         </View>
 
-        {/* 🌟 เนื้อหาเริ่มตรงนี้ (จะถูกเว้นที่ไว้ 130px โดยอัตโนมัติจาก paddingTop) 🌟 */}
         <Text style={styles.docTitle}>ใบเสนอราคา (QUOTATION)</Text>
 
         <Text style={styles.appreciationText}>
@@ -204,7 +223,6 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
           ทางเรามีความยินดีขอเสนอราคาผลิตภัณฑ์และเงื่อนไขการให้บริการตามรายละเอียดดังต่อไปนี้
         </Text>
 
-        {/* ข้อมูลลูกค้า */}
         <View style={styles.infoBox}>
           <View style={{ width: '55%' }}>
             <Text><Text style={styles.infoLabel}>เรียนลูกค้า: </Text>{customerFull?.company || customerFull?.name || quot.customerName || '-'}</Text>
@@ -219,9 +237,7 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
           </View>
         </View>
 
-        {/* ตารางสินค้า */}
         <View style={styles.table}>
-          {/* 🌟 หัวตาราง (ใช้ fixed เพื่อปั๊มออกทุกครั้งที่ขึ้นหน้าใหม่) 🌟 */}
           <View style={[styles.tableRow, styles.tableHeader]} fixed>
             <Text style={styles.colNo}>ลำดับ</Text>
             <Text style={styles.colDesc}>รายการ (Description)</Text>
@@ -229,12 +245,11 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
             <Text style={styles.colUnit}>ราคา/หน่วย</Text>
             <Text style={styles.colTotal}>ราคารวม (฿)</Text>
           </View>
-          
           {renderTableRows()}
         </View>
 
-        {/* 🌟 3. รัด Group สรุปเงิน และ ลายเซ็น ไม่ให้แยกหน้ากัน ทำให้ถูกผลักไปอยู่หน้าสุดท้ายด้วยกันเสมอ 🌟 */}
-        <View wrap={false} style={{ marginTop: 30 }}>
+        {/* ยอดเงินและลายเซ็น จะถูกผลักลงไปล่างสุดเสมอ */}
+        <View wrap={false} style={{ marginTop: 20 }}>
             <View style={styles.summaryBox}>
                 <View style={styles.summaryRow}>
                     <Text>รวมเป็นเงิน (ราคาก่อน VAT):</Text>
@@ -269,7 +284,6 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
             </View>
         </View>
 
-        {/* 🌟 4. แสดงเลขหน้า มุมขวาล่าง (ใช้ render prop ดึงจำนวนหน้า) 🌟 */}
         <Text 
           style={styles.pageNumber} 
           render={({ pageNumber, totalPages }) => (`หน้าที่ ${pageNumber} / ${totalPages}`)} 

@@ -962,17 +962,27 @@ const fetchAllMasterData = async () => {
 
 // --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
   const handleEditQuotation = (quot) => {
+      if(!quot.items) { quot.items = [{...defaultQuotItem}]; }
       setCurrentQuot(quot);
+      
+      // 🌟 บังคับพับเก็บ (Collapse) ทุกกล่องตอนกดแก้ไข 🌟
+      const initialCollapsed = {};
+      (quot.items || []).forEach(item => {
+          initialCollapsed[item.id] = true;
+      });
+      setCollapsedItems(initialCollapsed);
+
       setQuotationView('create'); // สลับไปหน้าฟอร์ม
   };
 
-// --- ฟังก์ชันกดสร้างใบเสนอราคาใหม่ ---
+  // --- ฟังก์ชันกดสร้างใบเสนอราคาใหม่ ---
   const handleCreateNewQuot = () => {
       setCurrentQuot({
           id: null, quotationNo: '', revision: 0, customerId: '', customerName: '',
-          items: [{ ...defaultQuotItem, id: Date.now() }], // เซ็ตค่าเริ่มต้นเป็น 1 รายการ
+          items: [{ ...defaultQuotItem, id: Date.now() }], 
           leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMarginBox: 50, profitMarginBlock: 20, profitMarginDieCut: 20, discount: 0,
       });
+      setCollapsedItems({}); // 🌟 ล้างค่าพับเก็บ ให้กล่องใบแรกกางออกเสมอ
       setQuotationView('create');
   };
 
@@ -1820,6 +1830,7 @@ const handleSaveQuotation = async () => {
         // ฟังก์ชันจำลองคำนวณราคาเฉลี่ยต่อกล่องสำหรับโชว์หน้าตาราง
         // ฟังก์ชันคำนวณแยกราคากล่องแต่ละรายการ เพื่อโชว์ในตาราง
         // ฟังก์ชันคำนวณแยกราคากล่องแต่ละรายการ เพื่อโชว์ในตาราง (อัปเดตกำไรแยกส่วน)
+// ฟังก์ชันคำนวณแยกราคากล่องแต่ละรายการ เพื่อโชว์ในตาราง (แก้ให้ราคาตรงกับ PDF)
         const getItemSummaryList = (quot) => {
             if (!quot.items || quot.items.length === 0) return [];
 
@@ -1845,6 +1856,7 @@ const handleSaveQuotation = async () => {
                 const areaSqFt = areaSqCm / 929.0304; 
                 const pPrice = paper ? parseFloat(paper.price) : 0;
                 
+                // ต้นทุนกล่อง+สี ที่บวกกำไรแล้ว
                 const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
                 const sellBoxCost = rawBoxCost * (1 + marginBox);
 
@@ -1859,14 +1871,15 @@ const handleSaveQuotation = async () => {
                 const sellDieCutCost = dieCutCost * (1 + marginDieCut);
                 
                 const qty = parseInt(item.quantity) || 1;
-                const itemSellTotal = (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
                 
-                totalSellingPrice += itemSellTotal;
+                // รวมยอดทั้งหมดเพื่อหาตัวคูณส่วนลด
+                totalSellingPrice += (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
 
+                // 🌟 เก็บเฉพาะ "ราคาขายกล่องเพียวๆ" ไว้ เพื่อให้ตรงกับใน PDF
                 itemsRaw.push({
                     dim: `${item.dimW || 0} x ${item.dimD || 0} x ${item.dimH || 0}`,
                     qty: qty,
-                    sellTotal: itemSellTotal
+                    pureBoxCost: sellBoxCost 
                 });
             });
 
@@ -1877,11 +1890,14 @@ const handleSaveQuotation = async () => {
             const discountPercent = parseFloat(quot.discount) || 0;
             const totalAfterDiscount = totalWithProfit - (totalWithProfit * (discountPercent / 100));
 
+            // ตัวคูณกระจายส่วนลด
             const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
 
             return itemsRaw.map(item => {
-                const finalTotalPrice = item.sellTotal * factor;
-                const unitPrice = item.qty > 0 ? finalTotalPrice / item.qty : 0;
+                // 🌟 คำนวณราคาขายต่อหน่วย (หักส่วนลดแล้ว) เฉพาะค่ากล่องเท่านั้น
+                const finalBoxTotal = (item.pureBoxCost * item.qty) * factor;
+                const unitPrice = item.qty > 0 ? finalBoxTotal / item.qty : 0;
+                
                 return { dim: item.dim, qty: item.qty, unitPrice };
             });
         };
