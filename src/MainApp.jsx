@@ -611,7 +611,7 @@ const fetchAllMasterData = async () => {
       id: null, quotationNo: '', revision: 0,
       customerId: '', customerName: '',
       items: [{ ...defaultQuotItem }], // 🌟 เปลี่ยนมาเก็บแบบ Array เพื่อรองรับหลายรายการ
-      leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMargin: 20, discount: 0,
+      leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMarginBox: 50, profitMarginBlock: 20, profitMarginDieCut: 20, discount: 0,
   });
 
   const [modalMode, setModalMode] = useState(null);
@@ -676,17 +676,23 @@ const fetchAllMasterData = async () => {
 
 // --- Calculation Logic (รองรับ Multi-items กล่องหลายใบ) ---
 // --- Calculation Logic (Multi-items) ---
+// --- Calculation Logic (รองรับกำไรแยกประเภท) ---
   const calculateTotals = () => {
-      let totalVariableCost = 0; 
-      let totalItemFixedCost = 0; 
+      let totalBoxCost = 0; 
+      let totalBlockCost = 0; 
+      let totalDieCutCost = 0;
       let itemsDetail = [];
+
+      const marginBox = (parseFloat(currentQuot.profitMarginBox) || 0) / 100;
+      const marginBlock = (parseFloat(currentQuot.profitMarginBlock) || 0) / 100;
+      const marginDieCut = (parseFloat(currentQuot.profitMarginDieCut) || 0) / 100;
 
       (currentQuot.items || []).forEach(item => {
           const W = parseFloat(item.dimW) || 0; const D = parseFloat(item.dimD) || 0;
           const H = parseFloat(item.dimH) || 0; const G = parseFloat(item.dimG) || 0; const M = parseFloat(item.dimM) || 0;
           
-          const paper = paperTypes.find(p => p.id.toString() === item.paperTypeId);
-          const selBox = boxStyles.find(b => b.id.toString() === item.boxStyleId);
+          const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
+          const selBox = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
           
           let areaSqCm = 0;
           let safeFormula = "ไม่มีสูตร";
@@ -701,56 +707,74 @@ const fetchAllMasterData = async () => {
           
           const areaSqFt = areaSqCm / 929.0304; 
           const pPrice = paper ? parseFloat(paper.price) : 0;
-          const colorCost = parseFloat(item.printCostPerBox) || 0;
-          const rawBoxCost = (areaSqFt * pPrice) + colorCost; // รวมค่าสีไปในค่ากล่องเลย
+          
+          // 1. ต้นทุนกล่องและสี
+          const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
+          const sellBoxCost = rawBoxCost + (rawBoxCost * marginBox); // บวกกำไร
 
-          const blocks1Cost = (item.printBlocks1 || []).reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
-          const blocks2Cost = (item.printBlocks2 || []).reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
-          const itemBlockCost = blocks1Cost + blocks2Cost;
+          // 2. ต้นทุนบล็อคพิมพ์
+          const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
+          const sellBlockCost = blockCost + (blockCost * marginBlock); // บวกกำไร
 
-          let itemDieCutCost = 0; 
+          // 3. ต้นทุนใบมีด
+          let dieCutCost = 0; 
           if (item.dieCutId && item.dieCutW && item.dieCutL) {
-              const mold = dieCutMolds.find(d => d.id.toString() === item.dieCutId);
-              itemDieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
+              const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
+              dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
           }
+          const sellDieCutCost = dieCutCost + (dieCutCost * marginDieCut); // บวกกำไร
 
           const qty = parseInt(item.quantity) || 1;
           
-          totalVariableCost += (rawBoxCost * qty);
-          totalItemFixedCost += itemBlockCost + itemDieCutCost;
+          totalBoxCost += (rawBoxCost * qty);
+          totalBlockCost += blockCost;
+          totalDieCutCost += dieCutCost;
 
-          // 🌟 ดึงข้อมูลมาสร้าง List สำหรับโชว์หน้า Summary
+          // สร้าง Detail เพื่อโชว์ในหน้าจอ (โชว์ราคาที่บวกกำไรแล้ว)
           const blockDetails = [
-              ...(item.printBlocks1 || []).map(b => ({ name: 'บล็อคพิมพ์ (สี 1)', size: `${b.w}x${b.l}`, price: parseFloat(b.price)||0 })),
-              ...(item.printBlocks2 || []).map(b => ({ name: 'บล็อคพิมพ์ (สี 2)', size: `${b.w}x${b.l}`, price: parseFloat(b.price)||0 }))
+              ...(item.printBlocks1 || []).map(b => ({ name: 'บล็อคพิมพ์ (สี 1)', size: `${b.w}x${b.l}`, price: parseFloat(b.price || 0) * (1 + marginBlock) })),
+              ...(item.printBlocks2 || []).map(b => ({ name: 'บล็อคพิมพ์ (สี 2)', size: `${b.w}x${b.l}`, price: parseFloat(b.price || 0) * (1 + marginBlock) }))
           ];
 
           itemsDetail.push({
               formulaStr: selBox?.formula, safeFormula, areaSqCm, areaSqFt, paperPrice: pPrice,
-              boxCost: rawBoxCost, blockCost: itemBlockCost, dieCutCost: itemDieCutCost, qty,
+              boxCost: sellBoxCost, // ราคาขาย
+              blockCost: sellBlockCost, // ราคาขาย
+              dieCutCost: sellDieCutCost, // ราคาขาย
+              qty,
               boxName: selBox?.codeName || 'ไม่ระบุรูปแบบ',
               dim: `${W}x${D}x${H}`,
               blockDetails,
-              dieCutDetail: item.dieCutId ? { size: `${item.dieCutW}x${item.dieCutL}`, price: itemDieCutCost } : null
+              dieCutDetail: item.dieCutId ? { size: `${item.dieCutW}x${item.dieCutL}`, price: sellDieCutCost } : null
           });
       });
 
+      // ค่าใช้จ่ายส่วนกลาง (ไม่มีกำไร)
       const shipCost = currentQuot.shippingType === 'delivery' ? (parseFloat(currentQuot.shippingCost) || 0) : 0;
       const setup = parseFloat(currentQuot.setupCost) || 0;
       
-      const grandTotalCost = totalVariableCost + totalItemFixedCost + shipCost + setup;
-      const profitAmount = grandTotalCost * ((parseFloat(currentQuot.profitMargin) || 0) / 100);
-      const totalWithProfit = grandTotalCost + profitAmount;
+      const grandTotalRawCost = totalBoxCost + totalBlockCost + totalDieCutCost + shipCost + setup;
+      
+      // ยอดรวมหลังบวกกำไรแต่ละส่วน
+      const profitBoxAmt = totalBoxCost * marginBox;
+      const profitBlockAmt = totalBlockCost * marginBlock;
+      const profitDieCutAmt = totalDieCutCost * marginDieCut;
+      const totalProfitAmount = profitBoxAmt + profitBlockAmt + profitDieCutAmt;
+      
+      const totalWithProfit = grandTotalRawCost + totalProfitAmount;
+
+      // ส่วนลดคิดจากยอดที่บวกกำไรแล้ว
       const discountAmount = totalWithProfit * ((parseFloat(currentQuot.discount) || 0) / 100);
       const totalAfterDiscount = totalWithProfit - discountAmount;
+
       const vat = totalAfterDiscount * 0.07;
       const netTotal = totalAfterDiscount + vat;
 
       return {
           itemsDetail,
-          totalVariableCost, totalItemFixedCost,
+          totalBoxCost, totalBlockCost, totalDieCutCost,
           shipCost, setupCost: setup,
-          grandTotalCost, totalWithProfit, totalAfterDiscount, netTotal // 🌟 เพิ่ม totalWithProfit แก้อาการ NaN
+          grandTotalRawCost, totalProfitAmount, totalWithProfit, totalAfterDiscount, netTotal
       };
   };
   const totals = useMemo(() => calculateTotals(), [currentQuot, paperTypes, boxStyles, dieCutMolds, printBlocks]);
@@ -855,13 +879,17 @@ const fetchAllMasterData = async () => {
 
 
 // --- ฟังก์ชันดาวน์โหลด PDF (ส่งข้อมูลให้ครบ 6 ลำดับ ป้องกันข้อมูลลูกค้าหาย) ---
+// --- ฟังก์ชันดาวน์โหลด PDF (อัปเดตกำไรแยกส่วน) ---
   const handleDownloadPDF = (quot) => {
       console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
       const exportFileName = generateExportFileName(quot);
       const customerFull = customers.find(c => c.id?.toString() === quot.customerId?.toString()) || {};
 
-      // 1. จำลองการคำนวณใหม่สำหรับเอกสารนี้เพื่อแยกรายการ
-      let totalVar = 0, totalFixed = 0;
+      const marginBox = (parseFloat(quot.profitMarginBox) || 0) / 100;
+      const marginBlock = (parseFloat(quot.profitMarginBlock) || 0) / 100;
+      const marginDieCut = (parseFloat(quot.profitMarginDieCut) || 0) / 100;
+
+      let totalSellingPrice = 0;
       const itemsCalc = [];
       
       (quot.items || []).forEach(item => {
@@ -878,26 +906,33 @@ const fetchAllMasterData = async () => {
           }
           const areaSqFt = areaSqCm / 929.0304; 
           const pPrice = paper ? parseFloat(paper.price) : 0;
+          
+          // ราคาขาย = ทุน * กำไร
           const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
+          const sellBoxCost = rawBoxCost * (1 + marginBox);
 
           const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
+          const sellBlockCost = blockCost * (1 + marginBlock);
+
           let dieCutCost = 0; 
           if (item.dieCutId && item.dieCutW && item.dieCutL) {
               const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
               dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
           }
-          const qty = parseInt(item.quantity) || 1;
-          totalVar += (rawBoxCost * qty);
-          totalFixed += blockCost + dieCutCost;
+          const sellDieCutCost = dieCutCost * (1 + marginDieCut);
 
+          const qty = parseInt(item.quantity) || 1;
+          totalSellingPrice += (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
+
+          // แพ็คข้อมูลส่งให้ PDF (ส่งราคาขายไปเลย PDF จะได้ไม่ต้องบวกกำไรซ้ำ)
           itemsCalc.push({
               boxName: boxStyle?.codeName || 'ไม่ระบุรูปแบบ',
               paperName: paper?.codeName || '-',
               dim: `${item.dimW||0}x${item.dimD||0}x${item.dimH||0}`,
               qty,
-              rawBoxCost,
-              blocks: [...(item.printBlocks1||[]), ...(item.printBlocks2||[])],
-              dieCutCost,
+              rawBoxCost: sellBoxCost, // PDF รับค่านี้ไปโชว์
+              blocks: [...(item.printBlocks1||[]), ...(item.printBlocks2||[])].map(b => ({...b, price: parseFloat(b.price||0) * (1 + marginBlock)})),
+              dieCutCost: sellDieCutCost,
               dieCutW: item.dieCutW,
               dieCutL: item.dieCutL
           });
@@ -905,32 +940,24 @@ const fetchAllMasterData = async () => {
 
       const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
       const setup = parseFloat(quot.setupCost) || 0;
-      const grandTotal = totalVar + totalFixed + setup + shipCost;
-      const withProfit = grandTotal + (grandTotal * ((parseFloat(quot.profitMargin)||0)/100));
-      const totalAfterDiscount = withProfit - (withProfit * ((parseFloat(quot.discount)||0)/100));
+      
+      const totalWithProfit = totalSellingPrice + setup + shipCost;
+      const totalAfterDiscount = totalWithProfit - (totalWithProfit * ((parseFloat(quot.discount)||0)/100));
       const netTotal = totalAfterDiscount * 1.07;
       
-      const factor = grandTotal > 0 ? (totalAfterDiscount / grandTotal) : 1;
+      // Factor สำหรับกระจาย "ส่วนลด" อย่างเดียวแล้ว (เพราะกำไรบวกไปในไอเทมแล้ว)
+      const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
 
       const calculatedTotals = {
           itemsCalc, 
-          setupCost: setup,
-          shipCost,
+          setupCost: setup, // ส่งต้นทุนไป PDF เลย เพราะไร้กำไร
+          shipCost: shipCost,
           totalAfterDiscount,
           netTotal,
           factor
       };
 
-      // 2. ส่งข้อมูลไปสร้าง PDF 
-      // 🌟🌟🌟 แก้ไขแล้ว: คืนค่า {} ไว้ในช่องที่ 4 เพื่อให้ข้อมูลลูกค้าและชื่อไฟล์ไม่ขยับผิดช่อง 🌟🌟🌟
-      generateQuotationPDF(
-          quot, 
-          companyData, 
-          calculatedTotals, 
-          {},             // <--- ตัวที่ 4: ใส่ {} ล็อคช่องไว้ 
-          customerFull,   // <--- ตัวที่ 5: ข้อมูลลูกค้า จะได้ไปแสดงบน PDF ถูกต้อง
-          exportFileName  // <--- ตัวที่ 6: ชื่อไฟล์จะได้เซฟออกมาถูกต้อง
-      );
+      generateQuotationPDF(quot, companyData, calculatedTotals, {}, customerFull, exportFileName);
   };
 
 // --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
@@ -944,7 +971,7 @@ const fetchAllMasterData = async () => {
       setCurrentQuot({
           id: null, quotationNo: '', revision: 0, customerId: '', customerName: '',
           items: [{ ...defaultQuotItem, id: Date.now() }], // เซ็ตค่าเริ่มต้นเป็น 1 รายการ
-          leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMargin: 20, discount: 0,
+          leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMarginBox: 50, profitMarginBlock: 20, profitMarginDieCut: 20, discount: 0,
       });
       setQuotationView('create');
   };
@@ -1792,13 +1819,17 @@ const handleSaveQuotation = async () => {
 
         // ฟังก์ชันจำลองคำนวณราคาเฉลี่ยต่อกล่องสำหรับโชว์หน้าตาราง
         // ฟังก์ชันคำนวณแยกราคากล่องแต่ละรายการ เพื่อโชว์ในตาราง
+        // ฟังก์ชันคำนวณแยกราคากล่องแต่ละรายการ เพื่อโชว์ในตาราง (อัปเดตกำไรแยกส่วน)
         const getItemSummaryList = (quot) => {
             if (!quot.items || quot.items.length === 0) return [];
 
-            let totalVar = 0, totalFixed = 0;
+            const marginBox = (parseFloat(quot.profitMarginBox) || 0) / 100;
+            const marginBlock = (parseFloat(quot.profitMarginBlock) || 0) / 100;
+            const marginDieCut = (parseFloat(quot.profitMarginDieCut) || 0) / 100;
+
+            let totalSellingPrice = 0;
             const itemsRaw = [];
 
-            // 1. วนลูปหาต้นทุนรวมของแต่ละกล่อง
             quot.items.forEach(item => {
                 const boxStyle = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
                 const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
@@ -1813,41 +1844,43 @@ const handleSaveQuotation = async () => {
                 }
                 const areaSqFt = areaSqCm / 929.0304; 
                 const pPrice = paper ? parseFloat(paper.price) : 0;
+                
                 const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
+                const sellBoxCost = rawBoxCost * (1 + marginBox);
 
                 const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
+                const sellBlockCost = blockCost * (1 + marginBlock);
+
                 let dieCutCost = 0; 
                 if (item.dieCutId && item.dieCutW && item.dieCutL) {
                     const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
                     dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
                 }
-                const qty = parseInt(item.quantity) || 1;
+                const sellDieCutCost = dieCutCost * (1 + marginDieCut);
                 
-                totalVar += (rawBoxCost * qty);
-                totalFixed += blockCost + dieCutCost;
+                const qty = parseInt(item.quantity) || 1;
+                const itemSellTotal = (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
+                
+                totalSellingPrice += itemSellTotal;
 
                 itemsRaw.push({
                     dim: `${item.dimW || 0} x ${item.dimD || 0} x ${item.dimH || 0}`,
                     qty: qty,
-                    rawTotal: (rawBoxCost * qty) + blockCost + dieCutCost
+                    sellTotal: itemSellTotal
                 });
             });
 
-            // 2. คำนวณส่วนลดและกำไร เพื่อหากระจายราคาต่อกล่อง
             const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
             const setup = parseFloat(quot.setupCost) || 0;
-            const grandTotalRaw = totalVar + totalFixed + setup + shipCost;
-
-            const profitPercent = parseFloat(quot.profitMargin) || 0;
-            const totalWithProfit = grandTotalRaw + (grandTotalRaw * (profitPercent / 100));
+            
+            const totalWithProfit = totalSellingPrice + setup + shipCost;
             const discountPercent = parseFloat(quot.discount) || 0;
             const totalAfterDiscount = totalWithProfit - (totalWithProfit * (discountPercent / 100));
 
-            const factor = grandTotalRaw > 0 ? (totalAfterDiscount / grandTotalRaw) : 1;
+            const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
 
-            // 3. แพ็คข้อมูลส่งออกไปให้ UI
             return itemsRaw.map(item => {
-                const finalTotalPrice = item.rawTotal * factor;
+                const finalTotalPrice = item.sellTotal * factor;
                 const unitPrice = item.qty > 0 ? finalTotalPrice / item.qty : 0;
                 return { dim: item.dim, qty: item.qty, unitPrice };
             });
@@ -2242,10 +2275,20 @@ const handleSaveQuotation = async () => {
                         </div>
 
                         <div className="border rounded-lg p-5 border-gray-200 bg-white shadow-sm">
-                             <div className="mb-6 pb-2 border-b border-gray-100"><h3 className="font-semibold text-gray-800 flex items-center gap-2"><DollarSign size={18} className="text-emerald-500"/> การเงิน (Financials)</h3></div>
-                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <InputGroup label="อัตรากำไร (Profit Margin)" type="number" value={currentQuot.profitMargin} onChange={(v) => setCurrentQuot({...currentQuot, profitMargin: v})} suffix="%" />
-                                <InputGroup label="ส่วนลด (Discount)" type="number" value={currentQuot.discount} onChange={(v) => setCurrentQuot({...currentQuot, discount: v})} suffix="%" />
+                             <div className="mb-6 pb-2 border-b border-gray-100">
+                                 <h3 className="font-semibold text-gray-800 flex items-center gap-2"><DollarSign size={18} className="text-emerald-500"/> การเงิน (Financials)</h3>
+                             </div>
+                             
+                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                <InputGroup label="1. กำไรกระดาษ+สี" type="number" value={currentQuot.profitMarginBox} onChange={(v) => setCurrentQuot({...currentQuot, profitMarginBox: v})} suffix="%" />
+                                <InputGroup label="2. กำไรบล็อคพิมพ์" type="number" value={currentQuot.profitMarginBlock} onChange={(v) => setCurrentQuot({...currentQuot, profitMarginBlock: v})} suffix="%" />
+                                <InputGroup label="3. กำไรใบมีด" type="number" value={currentQuot.profitMarginDieCut} onChange={(v) => setCurrentQuot({...currentQuot, profitMarginDieCut: v})} suffix="%" />
+                             </div>
+                             
+                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-gray-100">
+                                <div className="md:col-start-3">
+                                    <InputGroup label="ส่วนลดรวมท้ายบิล (Discount)" type="number" value={currentQuot.discount} onChange={(v) => setCurrentQuot({...currentQuot, discount: v})} suffix="%" />
+                                </div>
                              </div>
                         </div>
                     </div>
@@ -2260,10 +2303,13 @@ const handleSaveQuotation = async () => {
                                      </div>
                                  </div>
                                  <div className="p-6 space-y-4">
-                                     <h4 className="font-bold text-gray-800 flex items-center gap-2 border-b pb-2"><Calculator size={16}/> สรุปภาพรวม (Summary)</h4>
+                                     <h4 className="font-bold text-gray-800 flex items-center gap-2 border-b pb-2">
+                                        <Calculator size={16}/> สรุปรายการ (Summary)
+                                     </h4>
+                                     
                                      <div className="space-y-4 text-sm mt-4">
                                          {/* 🌟 วนลูปโชว์ราคาแยกตามกล่องแต่ละใบ */}
-                                         {totals.itemsDetail.map((detail, idx) => (
+                                         {(totals.itemsDetail || []).map((detail, idx) => (
                                              <div key={idx} className="border-b border-gray-100 pb-3">
                                                  <div className="flex justify-between items-start mb-1">
                                                      <span className="font-bold text-blue-800">
@@ -2271,13 +2317,13 @@ const handleSaveQuotation = async () => {
                                                          <span className="text-xs text-gray-500 block font-normal">{detail.dim} cm ({detail.boxName})</span>
                                                      </span>
                                                      <span className="font-bold text-gray-800">
-                                                         {(detail.boxCost * detail.qty).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿
+                                                         {((detail.boxCost * detail.qty) + detail.blockCost + detail.dieCutCost).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿
                                                      </span>
                                                  </div>
-                                                 <div className="text-xs text-gray-500 mb-2 pl-4">จำนวน {detail.qty.toLocaleString()} ใบ (@{detail.boxCost.toFixed(2)} ฿/ใบ รวมค่าสี)</div>
+                                                 <div className="text-xs text-gray-500 mb-2 pl-4">จำนวน {detail.qty.toLocaleString()} ใบ (@{detail.boxCost.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿/ใบ รวมค่าสี)</div>
                                                  
                                                  {/* ค่าบล็อคของกล่องนี้ */}
-                                                 {detail.blockDetails.map((b, i) => (
+                                                 {(detail.blockDetails || []).map((b, i) => (
                                                      <div key={i} className="flex justify-between text-xs text-gray-600 pl-4 mb-1">
                                                          <span>- {b.name} {b.size} นิ้ว</span>
                                                          <span>{b.price.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
@@ -2296,28 +2342,41 @@ const handleSaveQuotation = async () => {
 
                                          {/* ค่าใช้จ่ายส่วนกลาง */}
                                          {(totals.shipCost > 0 || totals.setupCost > 0) && (
-                                             <div className="pt-2 border-t border-dashed border-gray-300">
+                                             <div className="pt-2">
                                                  {totals.shipCost > 0 && (
-                                                     <div className="flex justify-between text-xs text-gray-500 mb-1">
-                                                         <div>ค่าขนส่งส่วนกลาง</div>
+                                                     <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                                         <div>- ค่าบริการจัดส่งส่วนกลาง</div>
                                                          <div>{totals.shipCost.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</div>
                                                      </div>
                                                  )}
                                                  {totals.setupCost > 0 && (
-                                                     <div className="flex justify-between text-xs text-gray-500">
-                                                         <div>ค่า Setup ส่วนกลาง</div>
+                                                     <div className="flex justify-between text-xs text-gray-600">
+                                                         <div>- ค่า Setup ส่วนกลาง</div>
                                                          <div>{totals.setupCost.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</div>
                                                      </div>
                                                  )}
                                              </div>
                                          )}
                                      </div>
-                                     <div className="pt-4 border-t border-gray-200 space-y-2">
-                                         <div className="flex justify-between text-sm text-gray-600"><span>รวมต้นทุนทั้งหมด</span><span>{totals.grandTotalCost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span></div>
-                                         <div className="flex justify-between text-sm text-green-600"><span>+ กำไร ({currentQuot.profitMargin}%)</span><span>{(totals.totalWithProfit - totals.grandTotalCost).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span></div>
-                                         <div className="flex justify-between text-sm text-red-500"><span>- ส่วนลด ({currentQuot.discount}%)</span><span>{(totals.totalWithProfit - totals.totalAfterDiscount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span></div>
-                                          <div className="flex justify-between text-sm font-bold text-gray-800 pt-2 border-t"><span>ยอดสุทธิ (ก่อน VAT)</span><span>{totals.totalAfterDiscount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span></div>
-                                         <div className="flex justify-between text-sm text-gray-500"><span>VAT 7%</span><span>{(totals.netTotal - totals.totalAfterDiscount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span></div>
+
+                                     {/* สรุปยอด Grand Total ด้านล่าง */}
+                                     <div className="pt-4 border-t border-gray-300 space-y-2">
+                                         <div className="flex justify-between text-sm text-gray-600">
+                                             <span>รวมราคาขาย (ก่อนส่วนลด)</span>
+                                             <span>{(totals.totalWithProfit || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
+                                         </div>
+                                         <div className="flex justify-between text-sm text-red-500">
+                                             <span>- ส่วนลด ({currentQuot.discount || 0}%)</span>
+                                             <span>{((totals.totalWithProfit || 0) - (totals.totalAfterDiscount || 0)).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
+                                         </div>
+                                          <div className="flex justify-between text-sm font-bold text-gray-800 pt-2 border-t">
+                                             <span>ยอดสุทธิ (ก่อน VAT)</span>
+                                             <span>{(totals.totalAfterDiscount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
+                                         </div>
+                                         <div className="flex justify-between text-sm text-gray-500">
+                                             <span>VAT 7%</span>
+                                             <span>{((totals.netTotal || 0) - (totals.totalAfterDiscount || 0)).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ฿</span>
+                                         </div>
                                      </div>
                                  </div>
                              </div>
