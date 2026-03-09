@@ -969,13 +969,12 @@ const handleDownloadPDF = (quot) => {
     generateQuotationPDF(quot, companyData, calculatedTotals, {}, customerFull, exportFileName);
 };
 
-
 // --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
   const handleEditQuotation = (quot) => {
       if(!quot.items) { quot.items = [{...defaultQuotItem}]; }
       setCurrentQuot(quot);
       
-      // บังคับพับเก็บ (Collapse) ทุกกล่องตอนกดแก้ไข
+      // 🌟 บังคับพับเก็บ (Collapse) ทุกกล่องตอนกดแก้ไข 🌟
       const initialCollapsed = {};
       (quot.items || []).forEach(item => {
           initialCollapsed[item.id] = true;
@@ -983,59 +982,6 @@ const handleDownloadPDF = (quot) => {
       setCollapsedItems(initialCollapsed);
 
       setQuotationView('create'); // สลับไปหน้าฟอร์ม
-
-      // 🌟🌟🌟 เช็คเงื่อนไขกระดาษ 3 ข้อ และสร้างข้อความเตือน 🌟🌟🌟
-      const warningMessages = [];
-      
-      (quot.items || []).forEach((item, index) => {
-          // ค้นหากระดาษและกล่องจาก ID
-          const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
-          const box = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
-          
-          // เตรียมข้อมูลคำเพื่อแสดงผล
-          const boxName = box ? box.codeName : 'ไม่ระบุรูปแบบ';
-          const dimStr = `${item.dimW || 0} x ${item.dimD || 0} x ${item.dimH || 0}`;
-          const paperName = paper ? paper.codeName : '(กระดาษที่ถูกลบออกจากระบบ)';
-          
-          let hasWarning = false;
-          let reason = '';
-
-          if (!paper) {
-              // กรณีที่ 3: หา ID กระดาษไม่เจอ (ถูกลบไปแล้ว)
-              hasWarning = true;
-              reason = 'ถูกลบออกจากระบบไปแล้ว';
-          } else {
-              const oldPrice = item.paperPriceSnapshot !== undefined ? parseFloat(item.paperPriceSnapshot) : null;
-              const currentPrice = parseFloat(paper.price || 0);
-              
-              if (paper.isActive === false) {
-                  // กรณีที่ 2: เลิกใช้ไปแล้ว (Inactive)
-                  hasWarning = true;
-                  reason = 'ถูกยกเลิกการใช้งานไปแล้ว (Inactive)';
-              } else if (oldPrice === null) {
-                  // เคสพิเศษ: ดักจับกรณีที่บิลนี้ไม่มีราคาเดิมล็อคไว้ (เช่นเพิ่งกดคัดลอกมา)
-                  hasWarning = true;
-                  reason = `ไม่มีข้อมูลราคาเดิมล็อคไว้ (ปัจจุบันราคา ${currentPrice} ฿)`;
-              } else if (oldPrice !== currentPrice) {
-                  // กรณีที่ 1: ราคาเปลี่ยน
-                  hasWarning = true;
-                  reason = `มีการเปลี่ยนแปลงไปแล้ว (เดิม ${oldPrice} ฿ เปลี่ยนเป็น ${currentPrice} ฿)`;
-              }
-          }
-
-          // ถ้าพบว่าตรงกับเงื่อนไขใดเงื่อนไขหนึ่ง ให้ต่อข้อความลงในลิสต์ตามรูปแบบที่ต้องการเป๊ะๆ
-          if (hasWarning) {
-              warningMessages.push(`${warningMessages.length + 1}. กล่อง รายการที่ ${index + 1} รูปแบบ ${boxName} ขนาด ${dimStr} ใช้ราคากระดาษ ${paperName} ที่${reason}`);
-          }
-      });
-
-      // ถ้าลิสต์คำเตือนมีข้อมูล (มากกว่า 0) ให้เด้ง Alert
-      if (warningMessages.length > 0) {
-          // หน่วงเวลาเพิ่มเป็น 300ms เพื่อให้แน่ใจว่าหน้าจอสลับเสร็จแล้ว และ Browser ไม่บล็อก Alert
-          setTimeout(() => {
-              alert(`🚨 แจ้งเตือน: พบรายการที่ราคาต้นทุนกระดาษไม่ตรงกับปัจจุบัน\n\n${warningMessages.join('\n\n')}\n\n💡 คำแนะนำ: หากต้องการใช้ราคากระดาษใหม่ล่าสุด กรุณากดเลือกกระดาษที่ช่องเดิมใหม่อีกครั้ง`);
-          }, 300);
-      }
   };
 
   // --- ฟังก์ชันกดสร้างใบเสนอราคาใหม่ ---
