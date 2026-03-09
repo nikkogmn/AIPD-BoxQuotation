@@ -607,19 +607,16 @@ const fetchAllMasterData = async () => {
   };
 
   // --- State หลักของใบเสนอราคา ---
-const [currentQuot, setCurrentQuot] = useState({
+  const [currentQuot, setCurrentQuot] = useState({
       id: null, quotationNo: '', revision: 0,
       customerId: '', customerName: '',
-      items: [{ ...defaultQuotItem }], 
+      items: [{ ...defaultQuotItem }], // 🌟 เปลี่ยนมาเก็บแบบ Array เพื่อรองรับหลายรายการ
       leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMarginBox: 50, profitMarginBlock: 20, profitMarginDieCut: 20, discount: 0,
-      displayMode: 'per-box' // 🌟 1. เพิ่มบรรทัดนี้เข้าไป
   });
 
   const [modalMode, setModalMode] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [formData, setFormData] = useState({});
-  // 🌟 จุดที่ 1: เพิ่ม State สำหรับ Bulk Import
-  const [bulkImportData, setBulkImportData] = useState({ rawText: '', supplier: '', note: '', flute: 'B', wallType: 'Single Wall', widths: '', suffix: '' });
   const [isUploading, setIsUploading] = useState(false); // <--- เพิ่มบรรทัดนี้เพื่อทำ Loading รูประหว่างอัปโหลด
   // --- Logic for Blocks ---
 // --- ฟังก์ชันจัดการรายการกล่อง (Add/Remove/Update Item) ---
@@ -709,8 +706,7 @@ const [currentQuot, setCurrentQuot] = useState({
           }
           
           const areaSqFt = areaSqCm / 929.0304; 
-          // 🌟 4. ดึงราคาจากที่ Snapshot ไว้ก่อน ถ้าไม่มีค่อยไปดึงจาก Master
-          const pPrice = item.paperPriceSnapshot !== undefined ? parseFloat(item.paperPriceSnapshot) : (paper ? parseFloat(paper.price) : 0);
+          const pPrice = paper ? parseFloat(paper.price) : 0;
           
           // 1. ต้นทุนกล่องและสี
           const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
@@ -884,90 +880,85 @@ const [currentQuot, setCurrentQuot] = useState({
 
 // --- ฟังก์ชันดาวน์โหลด PDF (ส่งข้อมูลให้ครบ 6 ลำดับ ป้องกันข้อมูลลูกค้าหาย) ---
 // --- ฟังก์ชันดาวน์โหลด PDF (อัปเดตกำไรแยกส่วน) ---
-// 🌟 นำไปแทนที่ฟังก์ชัน handleDownloadPDF เดิม 🌟
-const handleDownloadPDF = (quot) => {
-    console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
-    const exportFileName = generateExportFileName(quot);
-    const customerFull = customers.find(c => c.id?.toString() === quot.customerId?.toString()) || {};
-    const isPerBox = quot.displayMode !== 'detailed';
+  const handleDownloadPDF = (quot) => {
+      console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
+      const exportFileName = generateExportFileName(quot);
+      const customerFull = customers.find(c => c.id?.toString() === quot.customerId?.toString()) || {};
 
-    const marginBox = (parseFloat(quot.profitMarginBox) || 0) / 100;
-    const marginBlock = (parseFloat(quot.profitMarginBlock) || 0) / 100;
-    const marginDieCut = (parseFloat(quot.profitMarginDieCut) || 0) / 100;
+      const marginBox = (parseFloat(quot.profitMarginBox) || 0) / 100;
+      const marginBlock = (parseFloat(quot.profitMarginBlock) || 0) / 100;
+      const marginDieCut = (parseFloat(quot.profitMarginDieCut) || 0) / 100;
 
-    let sumSellingPrice = 0;
-    const itemsRaw = [];
-    
-    // Pass 1: คำนวณราคาทั้งหมด
-    (quot.items || []).forEach(item => {
-        const boxStyle = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
-        const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
-        let areaSqCm = 0;
-        if (boxStyle && boxStyle.formula) {
-            try {
-                let safeFormula = boxStyle.formula.replace(/(\d)([WDHGM])/gi, '$1*$2');
-                const calcArea = new Function('W', 'D', 'H', 'G', 'M', `return ${safeFormula};`);
-                areaSqCm = calcArea(parseFloat(item.dimW)||0, parseFloat(item.dimD)||0, parseFloat(item.dimH)||0, parseFloat(item.dimG)||0, parseFloat(item.dimM)||0);
-                if (isNaN(areaSqCm) || areaSqCm < 0) areaSqCm = 0;
-            } catch (e) {}
-        }
-        const areaSqFt = areaSqCm / 929.0304; 
-        // 🌟 4. ดึงราคาจากที่ Snapshot ไว้ก่อน ถ้าไม่มีค่อยไปดึงจาก Master
-        const pPrice = item.paperPriceSnapshot !== undefined ? parseFloat(item.paperPriceSnapshot) : (paper ? parseFloat(paper.price) : 0);
-        
-        const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
-        const sellBoxCost = rawBoxCost * (1 + marginBox);
-        const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
-        const sellBlockCost = blockCost * (1 + marginBlock);
+      let totalSellingPrice = 0;
+      const itemsCalc = [];
+      
+      (quot.items || []).forEach(item => {
+          const boxStyle = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
+          const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
+          let areaSqCm = 0;
+          if (boxStyle && boxStyle.formula) {
+              try {
+                  let safeFormula = boxStyle.formula.replace(/(\d)([WDHGM])/gi, '$1*$2');
+                  const calcArea = new Function('W', 'D', 'H', 'G', 'M', `return ${safeFormula};`);
+                  areaSqCm = calcArea(parseFloat(item.dimW)||0, parseFloat(item.dimD)||0, parseFloat(item.dimH)||0, parseFloat(item.dimG)||0, parseFloat(item.dimM)||0);
+                  if (isNaN(areaSqCm) || areaSqCm < 0) areaSqCm = 0;
+              } catch (e) {}
+          }
+          const areaSqFt = areaSqCm / 929.0304; 
+          const pPrice = paper ? parseFloat(paper.price) : 0;
+          
+          // ราคาขาย = ทุน * กำไร
+          const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
+          const sellBoxCost = rawBoxCost * (1 + marginBox);
 
-        let dieCutCost = 0; 
-        if (item.dieCutId && item.dieCutW && item.dieCutL) {
-            const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
-            dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
-        }
-        const sellDieCutCost = dieCutCost * (1 + marginDieCut);
-        const qty = parseInt(item.quantity) || 1;
-        const itemSellingTotal = (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
-        
-        sumSellingPrice += itemSellingTotal;
-        itemsRaw.push({ itemRef: item, sellBoxCost, sellBlockCost, sellDieCutCost, itemSellingTotal, qty });
-    });
+          const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
+          const sellBlockCost = blockCost * (1 + marginBlock);
 
-    const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
-    const setup = parseFloat(quot.setupCost) || 0;
-    const totalWithProfit = sumSellingPrice + setup + shipCost;
-    const discountPercent = parseFloat(quot.discount) || 0;
-    const totalAfterDiscount = totalWithProfit - (totalWithProfit * (discountPercent / 100));
-    const netTotal = totalAfterDiscount * 1.07;
-    const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
+          let dieCutCost = 0; 
+          if (item.dieCutId && item.dieCutW && item.dieCutL) {
+              const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
+              dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
+          }
+          const sellDieCutCost = dieCutCost * (1 + marginDieCut);
 
-    // Pass 2: เตรียมข้อมูลให้ PDF
-    const itemsCalc = itemsRaw.map(raw => {
-        const blocks = [...(raw.itemRef.printBlocks1||[]), ...(raw.itemRef.printBlocks2||[])].map(b => ({...b, price: parseFloat(b.price||0) * (1 + marginBlock)}));
-        
-        // ✨ คำนวณต้นทุนรวมต่อใบ (กระจายค่าจัดส่ง+Setup เข้าไปเนียนๆ)
-        const ratio = sumSellingPrice > 0 ? (raw.itemSellingTotal / sumSellingPrice) : 0;
-        const itemOverhead = (setup + shipCost) * ratio; 
-        const itemTotalWithOverhead = raw.itemSellingTotal + itemOverhead;
-        const perBoxFinalTotal = itemTotalWithOverhead * factor; // หักส่วนลดเรียบร้อย
+          const qty = parseInt(item.quantity) || 1;
+          totalSellingPrice += (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
 
-        return {
-            boxName: boxStyles.find(b => b.id?.toString() === raw.itemRef.boxStyleId?.toString())?.codeName || 'ไม่ระบุรูปแบบ',
-            paperName: paperTypes.find(p => p.id?.toString() === raw.itemRef.paperTypeId?.toString())?.codeName || '-',
-            dim: `${raw.itemRef.dimW||0}x${raw.itemRef.dimD||0}x${raw.itemRef.dimH||0}`,
-            qty: raw.qty,
-            rawBoxCost: raw.sellBoxCost, 
-            blocks, 
-            dieCutCost: raw.sellDieCutCost,
-            dieCutW: raw.itemRef.dieCutW,
-            dieCutL: raw.itemRef.dieCutL,
-            perBoxFinalTotal 
-        };
-    });
+          // แพ็คข้อมูลส่งให้ PDF (ส่งราคาขายไปเลย PDF จะได้ไม่ต้องบวกกำไรซ้ำ)
+          itemsCalc.push({
+              boxName: boxStyle?.codeName || 'ไม่ระบุรูปแบบ',
+              paperName: paper?.codeName || '-',
+              dim: `${item.dimW||0}x${item.dimD||0}x${item.dimH||0}`,
+              qty,
+              rawBoxCost: sellBoxCost, // PDF รับค่านี้ไปโชว์
+              blocks: [...(item.printBlocks1||[]), ...(item.printBlocks2||[])].map(b => ({...b, price: parseFloat(b.price||0) * (1 + marginBlock)})),
+              dieCutCost: sellDieCutCost,
+              dieCutW: item.dieCutW,
+              dieCutL: item.dieCutL
+          });
+      });
 
-    const calculatedTotals = { itemsCalc, setupCost: setup, shipCost: shipCost, totalAfterDiscount, netTotal, factor };
-    generateQuotationPDF(quot, companyData, calculatedTotals, {}, customerFull, exportFileName);
-};
+      const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
+      const setup = parseFloat(quot.setupCost) || 0;
+      
+      const totalWithProfit = totalSellingPrice + setup + shipCost;
+      const totalAfterDiscount = totalWithProfit - (totalWithProfit * ((parseFloat(quot.discount)||0)/100));
+      const netTotal = totalAfterDiscount * 1.07;
+      
+      // Factor สำหรับกระจาย "ส่วนลด" อย่างเดียวแล้ว (เพราะกำไรบวกไปในไอเทมแล้ว)
+      const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
+
+      const calculatedTotals = {
+          itemsCalc, 
+          setupCost: setup, // ส่งต้นทุนไป PDF เลย เพราะไร้กำไร
+          shipCost: shipCost,
+          totalAfterDiscount,
+          netTotal,
+          factor
+      };
+
+      generateQuotationPDF(quot, companyData, calculatedTotals, {}, customerFull, exportFileName);
+  };
 
 // --- ฟังก์ชันกดแก้ไข (เปิดฟอร์ม) ---
   const handleEditQuotation = (quot) => {
@@ -985,14 +976,13 @@ const handleDownloadPDF = (quot) => {
   };
 
   // --- ฟังก์ชันกดสร้างใบเสนอราคาใหม่ ---
-const handleCreateNewQuot = () => {
+  const handleCreateNewQuot = () => {
       setCurrentQuot({
           id: null, quotationNo: '', revision: 0, customerId: '', customerName: '',
           items: [{ ...defaultQuotItem, id: Date.now() }], 
           leadTime: 14, shippingType: 'pickup', shippingCost: 0, setupCost: 0, profitMarginBox: 50, profitMarginBlock: 20, profitMarginDieCut: 20, discount: 0,
-          displayMode: 'per-box' // 🌟 2. เพิ่มตรงนี้ด้วย เพื่อให้ตอนกดสร้างใหม่ ค่าเริ่มต้นเป็นแบบต่อใบ
       });
-      setCollapsedItems({}); 
+      setCollapsedItems({}); // 🌟 ล้างค่าพับเก็บ ให้กล่องใบแรกกางออกเสมอ
       setQuotationView('create');
   };
 
@@ -1428,15 +1418,11 @@ const handleConfirmAction = async () => {
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
       <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
         <div>
-          <h2 className="text-lg font-bold text-gray-800">ข้อมูลประเภทกระดาษ (Paper Types)</h2>
-          <p className="text-sm text-gray-500">จัดการสเปคกระดาษลูกฟูก ราคา และ Supplier</p>
-        </div>
-        {/* 🌟 จุดที่ 2: เปลี่ยนเป็นปุ่ม 2 อัน */}
-        <div className="flex gap-2">
-            <Button variant="outline" icon={FilePlus} onClick={() => { setBulkImportData({ rawText: '', supplier: '', note: '', flute: 'B', wallType: 'Single Wall', widths: '', suffix: '' }); setModalMode('bulkImportPaper'); }}>นำเข้าหลายรายการ</Button>
-            <Button variant="primary" icon={Plus} onClick={handleCreateClick}>เพิ่มรายการ</Button>
-        </div>
-      </div>
+          <h2 className="text-lg font-bold text-gray-800">ข้อมูลประเภทกระดาษ (Paper Types)</h2>
+          <p className="text-sm text-gray-500">จัดการสเปคกระดาษลูกฟูก ราคา และ Supplier</p>
+        </div>
+        <Button variant="primary" icon={Plus} onClick={handleCreateClick}>เพิ่มรายการ</Button>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse whitespace-nowrap">
           <thead>
@@ -1457,15 +1443,9 @@ const handleConfirmAction = async () => {
             {paperTypes.map((item) => (
                 <tr key={item.id} className="hover:bg-blue-50/30 transition-colors">
                   <td className="p-4 font-medium text-gray-900">
-                      {item.codeName}
-                      {/* 🌟 2. เพิ่มป้ายบอกสถานะตรงนี้ */}
-                      {item.isActive === false ? (
-                          <span className="bg-red-100 text-red-700 text-[10px] px-2 py-0.5 rounded ml-2 border border-red-200">ยกเลิก (Inactive)</span>
-                      ) : (
-                          <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded ml-2 border border-green-200">ใช้งานอยู่</span>
-                      )}
-                      <div className="text-xs text-gray-400 font-normal mt-1">{item.globalName}</div>
-                  </td>
+                      {item.codeName}
+                      <div className="text-xs text-gray-400 font-normal">{item.globalName}</div>
+                  </td>
                   <td className="p-4">
                       <div className="flex flex-col gap-1">
                           <span className="font-semibold text-gray-700">{item.flute}-Flute</span>
@@ -1762,18 +1742,12 @@ const handleConfirmAction = async () => {
 // --- ฟังก์ชันบันทึกใบเสนอราคาลง Database ---
 const handleSaveQuotation = async () => {
       try {
-          // 🌟🌟🌟 ดักสถานะตรงนี้: ห้ามเซฟทับถ้าสั่งผลิตหรือปิดรายการแล้ว 🌟🌟🌟
-          if (currentQuot.status && currentQuot.status.startsWith('3')) {
-              alert(`⚠️ ไม่อนุญาตให้บันทึกทับเอกสารนี้ เนื่องจากสถานะคือ "${currentQuot.status}"\n\nหากต้องการเปลี่ยนแปลงข้อมูล หรือทำราคาใหม่ให้ลูกค้า กรุณาสร้างใบเสนอราคาใหม่แทนครับ`);
-              return; // หยุดการทำงานทันที (ไม่เซฟลง Database)
-          }
-
           if (!currentQuot.customerId) {
               alert("กรุณาเลือกลูกค้าให้ครบถ้วนก่อนบันทึก");
               return;
           }
           
-          // เช็คว่ากล่องทุกใบถูกเลือก รูปแบบ และ กระดาษ หรือยัง
+          // 🌟 1. เช็คว่ากล่องทุกใบถูกเลือก รูปแบบ และ กระดาษ หรือยัง
           const hasInvalidItem = currentQuot.items.some(item => !item.boxStyleId || !item.paperTypeId);
           if (hasInvalidItem) {
               alert("กรุณาเลือก รูปแบบกล่อง และ เกรดกระดาษ ให้ครบทุกรายการก่อนบันทึก");
@@ -1789,14 +1763,15 @@ const handleSaveQuotation = async () => {
           const nextRevision = isEditing ? currentRev + 1 : 0; // แก้ไขให้บวก 1
 
           // 2. จัดการวันที่เพื่อสร้างเลขที่เอกสาร (ยึดตามวันเวลาที่สร้างครั้งแรกเสมอ)
+          // ถ้ามี createdDate เดิมให้ใช้ของเดิม ถ้าไม่มีแปลว่าเพิ่งสร้าง ให้ใช้เวลาปัจจุบัน
           const baseDateStr = currentQuot.createdDate ? currentQuot.createdDate : currentDateStr;
           
-          // แยกวันที่และเวลาออกจากรูปแบบ "YYYY-MM-DD HH:mm" แบบตรงๆ 
+          // แยกวันที่และเวลาออกจากรูปแบบ "YYYY-MM-DD HH:mm" แบบตรงๆ (เพื่อป้องกันเบราว์เซอร์แปลงเวลาเพี้ยน)
           const [datePart, timePart] = baseDateStr.split(' ');
           const [yyyy, mm, dd] = datePart.split('-');
           const [hh, min] = timePart.split(':');
           
-          const yy = yyyy.slice(-2); // ดึงปีมาแค่ 2 หลักท้าย
+          const yy = yyyy.slice(-2); // ดึงปีมาแค่ 2 หลักท้าย (เช่น 2026 เป็น 26)
           const revStr = String(nextRevision).padStart(2, '0'); // แปลง Revision ให้เป็น 2 หลัก
           
           // ประกอบร่างใหม่เป็น Format: AIPQ_DDMMYYhhmm_Sxx
@@ -1804,7 +1779,7 @@ const handleSaveQuotation = async () => {
 
           // 3. เตรียมข้อมูลเซฟ 
           const dataToSave = { ...currentQuot };
-          delete dataToSave.id; // ลบ id ออก เพื่อไม่ให้เซฟค่า null ลง Database
+          delete dataToSave.id; // 🌟 สำคัญมาก: ลบ id ออก เพื่อไม่ให้เซฟค่า null ลง Database
           
           dataToSave.quotationNo = newQuotNo;
           dataToSave.revision = nextRevision;
@@ -1826,6 +1801,7 @@ const handleSaveQuotation = async () => {
           
           // โหลดข้อมูลอัปเดตตารางใหม่ 
           const qSnap = await getDocs(collection(db, "quotations"));
+          // 🌟 บังคับเอา id: doc.id ไว้ด้านหลัง เพื่อทับค่า null ที่อาจจะหลงเหลืออยู่ในใบเก่าๆ
           const quots = qSnap.docs.map(doc => ({ ...doc.data(), id: doc.id })); 
           quots.sort((a, b) => new Date(b.lastModifiedDate || b.createdDate) < new Date(a.lastModifiedDate || a.createdDate) ? 1 : -1);
           setQuotationList(quots);
@@ -1836,49 +1812,6 @@ const handleSaveQuotation = async () => {
           alert("บันทึกไม่สำเร็จ: " + error.message);
       }
   };
-
-
-// 🌟 ฟังก์ชันคัดลอกใบเสนอราคาเดิม สร้างเป็นใบใหม่ 🌟
-  const handleDuplicateQuotation = (sourceQuot) => {
-      if (!window.confirm("คุณต้องการคัดลอกข้อมูลนี้ เพื่อสร้างเป็น 'ใบเสนอราคาใหม่' ใช่หรือไม่?\n\n(ระบบจะใช้ราคากระดาษปัจจุบันจาก Master Data แทนราคาเดิม)")) {
-          return;
-      }
-
-      // 1. คัดลอกรายการกล่องทั้งหมด และ "ล้างค่าราคากระดาษเดิม" ทิ้ง
-      const copiedItems = sourceQuot.items.map(item => {
-          const newItem = { ...item };
-          
-          // 🛑 ลบ Snapshot ราคาเก่าทิ้ง เพื่อบังคับให้ระบบไปดึงราคาล่าสุดจาก Master Data
-          delete newItem.paperPriceSnapshot; 
-          
-          // เคลียร์ ID ของกล่อง (ถ้ามี) เผื่อใช้สำหรับอ้างอิงใหม่
-          newItem.id = Date.now() + Math.random(); 
-          return newItem;
-      });
-
-      // 2. สร้าง Object ใบเสนอราคาใหม่
-      const newQuotData = {
-          ...sourceQuot,
-          id: null,               // เคลียร์ ID เพื่อให้ระบบรู้ว่าเป็นเอกสารใหม่
-          quotationNo: '',        // รอ Gen เลขใหม่ตอนกดบันทึก
-          revision: 0,            // เริ่มนับ Rev ใหม่
-          status: '0.แบบร่าง',    // กลับไปเป็นสถานะแบบร่าง
-          items: copiedItems,     // ใส่รายการกล่องที่ล้างราคาแล้ว
-          createdDate: null       // เคลียร์วันที่สร้าง เพื่อให้ใช้วันปัจจุบันตอนเซฟ
-      };
-
-      // 3. ยัดข้อมูลใหม่ใส่ฟอร์ม และเปิดหน้าจอ
-      setCurrentQuot(newQuotData);
-      setCollapsedItems({}); // เปิดให้เห็นรายละเอียดทุกกล่อง
-      setQuotationView('create');
-
-      // 🌟🌟🌟 เพิ่ม Prompt (Alert) แจ้งเตือน User ตรงนี้ 🌟🌟🌟
-      setTimeout(() => {
-          alert("✅ ระบบได้คัดลอกใบเสนอราคาแล้ว\n\n⚠️ กรุณาตรวจสอบข้อมูล และ อัปเดตราคากระดาษปัจจุบันอีกครั้งก่อนกดบันทึก");
-      }, 100); 
-      // ใส่ setTimeout ไว้ 100ms เพื่อให้หน้าจอสลับไปฟอร์มใหม่ให้เสร็จก่อน แล้วค่อยเด้งข้อความขึ้นมาเตือนครับ
-  };
-  
   // NEW: Quotation Screen
  const renderQuotationScreen = () => {
     if (quotationView === 'list') {
@@ -1898,79 +1831,76 @@ const handleSaveQuotation = async () => {
         // ฟังก์ชันคำนวณแยกราคากล่องแต่ละรายการ เพื่อโชว์ในตาราง
         // ฟังก์ชันคำนวณแยกราคากล่องแต่ละรายการ เพื่อโชว์ในตาราง (อัปเดตกำไรแยกส่วน)
 // ฟังก์ชันคำนวณแยกราคากล่องแต่ละรายการ เพื่อโชว์ในตาราง (แก้ให้ราคาตรงกับ PDF)
-const getItemSummaryList = (quot) => {
-    if (!quot.items || quot.items.length === 0) return [];
-    const isPerBox = quot.displayMode !== 'detailed'; 
+        const getItemSummaryList = (quot) => {
+            if (!quot.items || quot.items.length === 0) return [];
 
-    const marginBox = (parseFloat(quot.profitMarginBox) || 0) / 100;
-    const marginBlock = (parseFloat(quot.profitMarginBlock) || 0) / 100;
-    const marginDieCut = (parseFloat(quot.profitMarginDieCut) || 0) / 100;
+            const marginBox = (parseFloat(quot.profitMarginBox) || 0) / 100;
+            const marginBlock = (parseFloat(quot.profitMarginBlock) || 0) / 100;
+            const marginDieCut = (parseFloat(quot.profitMarginDieCut) || 0) / 100;
 
-    let sumSellingPrice = 0;
-    const itemsRaw = [];
+            let totalSellingPrice = 0;
+            const itemsRaw = [];
 
-    quot.items.forEach(item => {
-        const boxStyle = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
-        const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
-        let areaSqCm = 0;
-        if (boxStyle && boxStyle.formula) {
-            try {
-                let safeFormula = boxStyle.formula.replace(/(\d)([WDHGM])/gi, '$1*$2');
-                const calcArea = new Function('W', 'D', 'H', 'G', 'M', `return ${safeFormula};`);
-                areaSqCm = calcArea(parseFloat(item.dimW)||0, parseFloat(item.dimD)||0, parseFloat(item.dimH)||0, parseFloat(item.dimG)||0, parseFloat(item.dimM)||0);
-                if (isNaN(areaSqCm) || areaSqCm < 0) areaSqCm = 0;
-            } catch (e) {}
-        }
-        const areaSqFt = areaSqCm / 929.0304; 
-        // 🌟 4. ดึงราคาจากที่ Snapshot ไว้ก่อน ถ้าไม่มีค่อยไปดึงจาก Master
-        const pPrice = item.paperPriceSnapshot !== undefined ? parseFloat(item.paperPriceSnapshot) : (paper ? parseFloat(paper.price) : 0);
-        
-        const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
-        const sellBoxCost = rawBoxCost * (1 + marginBox);
-        const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
-        const sellBlockCost = blockCost * (1 + marginBlock);
+            quot.items.forEach(item => {
+                const boxStyle = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
+                const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
+                let areaSqCm = 0;
+                if (boxStyle && boxStyle.formula) {
+                    try {
+                        let safeFormula = boxStyle.formula.replace(/(\d)([WDHGM])/gi, '$1*$2');
+                        const calcArea = new Function('W', 'D', 'H', 'G', 'M', `return ${safeFormula};`);
+                        areaSqCm = calcArea(parseFloat(item.dimW)||0, parseFloat(item.dimD)||0, parseFloat(item.dimH)||0, parseFloat(item.dimG)||0, parseFloat(item.dimM)||0);
+                        if (isNaN(areaSqCm) || areaSqCm < 0) areaSqCm = 0;
+                    } catch (e) {}
+                }
+                const areaSqFt = areaSqCm / 929.0304; 
+                const pPrice = paper ? parseFloat(paper.price) : 0;
+                
+                // ต้นทุนกล่อง+สี ที่บวกกำไรแล้ว
+                const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
+                const sellBoxCost = rawBoxCost * (1 + marginBox);
 
-        let dieCutCost = 0; 
-        if (item.dieCutId && item.dieCutW && item.dieCutL) {
-            const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
-            dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
-        }
-        const sellDieCutCost = dieCutCost * (1 + marginDieCut);
-        const qty = parseInt(item.quantity) || 1;
-        const itemSellingTotal = (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
-        sumSellingPrice += itemSellingTotal;
+                const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
+                const sellBlockCost = blockCost * (1 + marginBlock);
 
-        itemsRaw.push({
-            dim: `${item.dimW || 0} x ${item.dimD || 0} x ${item.dimH || 0}`,
-            qty: qty,
-            sellBoxCost: sellBoxCost,
-            itemSellingTotal: itemSellingTotal
-        });
-    });
+                let dieCutCost = 0; 
+                if (item.dieCutId && item.dieCutW && item.dieCutL) {
+                    const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
+                    dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
+                }
+                const sellDieCutCost = dieCutCost * (1 + marginDieCut);
+                
+                const qty = parseInt(item.quantity) || 1;
+                
+                // รวมยอดทั้งหมดเพื่อหาตัวคูณส่วนลด
+                totalSellingPrice += (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
 
-    const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
-    const setup = parseFloat(quot.setupCost) || 0;
-    const totalWithProfit = sumSellingPrice + setup + shipCost;
-    const discountPercent = parseFloat(quot.discount) || 0;
-    const totalAfterDiscount = totalWithProfit - (totalWithProfit * (discountPercent / 100));
-    const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
+                // 🌟 เก็บเฉพาะ "ราคาขายกล่องเพียวๆ" ไว้ เพื่อให้ตรงกับใน PDF
+                itemsRaw.push({
+                    dim: `${item.dimW || 0} x ${item.dimD || 0} x ${item.dimH || 0}`,
+                    qty: qty,
+                    pureBoxCost: sellBoxCost 
+                });
+            });
 
-    return itemsRaw.map(item => {
-        let unitPrice = 0;
-        if (isPerBox) {
-            // โหมดรวบยอด: คำนวณราคาที่กระจายค่าทั้งหมดรวมไว้แล้ว
-            const ratio = sumSellingPrice > 0 ? (item.itemSellingTotal / sumSellingPrice) : 0;
-            const itemOverhead = (setup + shipCost) * ratio;
-            const perBoxFinalTotal = (item.itemSellingTotal + itemOverhead) * factor;
-            unitPrice = item.qty > 0 ? perBoxFinalTotal / item.qty : 0;
-        } else {
-            // โหมดแจกแจง: แสดงเฉพาะค่ากล่องเปล่าๆ 
-            const finalBoxTotal = (item.sellBoxCost * item.qty) * factor;
-            unitPrice = item.qty > 0 ? finalBoxTotal / item.qty : 0;
-        }
-        return { dim: item.dim, qty: item.qty, unitPrice };
-    });
-};
+            const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
+            const setup = parseFloat(quot.setupCost) || 0;
+            
+            const totalWithProfit = totalSellingPrice + setup + shipCost;
+            const discountPercent = parseFloat(quot.discount) || 0;
+            const totalAfterDiscount = totalWithProfit - (totalWithProfit * (discountPercent / 100));
+
+            // ตัวคูณกระจายส่วนลด
+            const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
+
+            return itemsRaw.map(item => {
+                // 🌟 คำนวณราคาขายต่อหน่วย (หักส่วนลดแล้ว) เฉพาะค่ากล่องเท่านั้น
+                const finalBoxTotal = (item.pureBoxCost * item.qty) * factor;
+                const unitPrice = item.qty > 0 ? finalBoxTotal / item.qty : 0;
+                
+                return { dim: item.dim, qty: item.qty, unitPrice };
+            });
+        };
 
         return (
             <div className="space-y-6">
@@ -2100,37 +2030,7 @@ const getItemSummaryList = (quot) => {
                 </div>
             </div>
         );
-   } else {
-        // 🌟 1. เพิ่มตัวแปรเช็คสถานะและกำหนด Theme ของ Header
-        const isLocked = currentQuot.status?.startsWith('3');
-        const isEditing = !!currentQuot.id;
-
-        let headerTheme = {
-            title: "สร้างใบเสนอราคาใหม่",
-            subtitle: "New Quotation Draft",
-            bgClass: "bg-blue-50 border-blue-200",
-            textClass: "text-blue-800",
-            icon: <FilePlus size={24} className="text-blue-600" />
-        };
-
-        if (isLocked) {
-            headerTheme = {
-                title: `รายละเอียดใบเสนอราคา: ${currentQuot.quotationNo}`,
-                subtitle: `โหมดอ่านอย่างเดียว (Read-Only) - สถานะ: ${currentQuot.status}`,
-                bgClass: "bg-red-50 border-red-200",
-                textClass: "text-red-800",
-                icon: <Shield size={24} className="text-red-600" />
-            };
-        } else if (isEditing) {
-            headerTheme = {
-                title: `แก้ไขใบเสนอราคา: ${currentQuot.quotationNo}`,
-                subtitle: `กำลังแก้ไขข้อมูล (Revision: ${currentQuot.revision || 0})`,
-                bgClass: "bg-amber-50 border-amber-200",
-                textClass: "text-amber-800",
-                icon: <Edit size={24} className="text-amber-600" />
-            };
-        }
-
+    } else {
         const renderPrintConfig = (item, itemIndex, colorIndex) => {
             const stateField = colorIndex === 1 ? 'printBlocks1' : 'printBlocks2';
             const colorField = colorIndex === 1 ? 'printColorId1' : 'printColorId2';
@@ -2168,35 +2068,18 @@ const getItemSummaryList = (quot) => {
 
         return (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 min-h-[600px] flex flex-col">
-                {/* 🌟 2. ดึงสีและข้อความจาก Theme มาแสดงผล */}
-                <div className={`p-4 border-b flex justify-between items-center rounded-t-xl sticky top-0 z-40 shadow-sm transition-colors duration-300 ${headerTheme.bgClass}`}>
-                    <div className="flex items-center gap-4">
+                <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-xl sticky top-0 z-40 shadow-sm">
+                    <div className="flex items-center gap-3">
                         <button 
                             onClick={() => { if(window.confirm('คุณต้องการออกจากหน้านี้ใช่หรือไม่? ข้อมูลที่ยังไม่ได้บันทึกจะสูญหาย')) { setQuotationView('list'); } }} 
-                            className="p-2 bg-white/50 hover:bg-white rounded-full transition-colors border border-transparent hover:border-gray-300 shadow-sm" title="กลับไปหน้ารายการ"
+                            className="p-2 hover:bg-white rounded-full transition-colors border border-transparent hover:border-gray-200" title="กลับไปหน้ารายการ"
                         >
-                            <ChevronLeft size={20} className="text-gray-700" />
+                            <ChevronLeft size={20} className="text-gray-600" />
                         </button>
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 bg-white rounded-lg shadow-sm">
-                                {headerTheme.icon}
-                            </div>
-                            <div>
-                                <h2 className={`text-xl font-bold ${headerTheme.textClass}`}>{headerTheme.title}</h2>
-                                <p className={`text-sm font-medium ${headerTheme.textClass} opacity-80`}>{headerTheme.subtitle}</p>
-                            </div>
-                        </div>
+                        <div><h2 className="text-lg font-bold text-gray-800">สร้างใบเสนอราคาใหม่</h2><p className="text-xs text-gray-500">New Quotation Draft</p></div>
                     </div>
                     <div className="flex gap-2">
-                        {/* ปุ่มคัดลอก: โชว์เสมอถ้ามี ID บิลแล้ว */}
-                        {currentQuot.id && (
-                            <Button variant="outline" icon={Copy} onClick={() => handleDuplicateQuotation(currentQuot)} className="bg-white">
-                                คัดลอกสร้างใบใหม่
-                            </Button>
-                        )}
-                        
-                        {/* 🌟 (อัปเดต) ซ่อนปุ่ม Save ถ้าเอกสารถูกล็อคไปแล้ว */}
-                        {!isLocked && <Button variant="primary" icon={Save} onClick={handleSaveQuotation}>บันทึกใบเสนอราคา</Button>}
+                        <Button variant="primary" icon={Save} onClick={handleSaveQuotation}>บันทึกใบเสนอราคา</Button>  
                     </div>
                 </div>
 
@@ -2229,7 +2112,7 @@ const getItemSummaryList = (quot) => {
                                     {currentQuot.customerName ? <span className="font-semibold text-blue-600">{currentQuot.customerName}</span> : 'ยังไม่ได้เลือกลูกค้า'}
                                 </div>
                             </div>
-                        
+                        </div>
 
                         {/* 🌟🌟🌟 วนลูปกล่องแต่ละรายการ (Item Group: Box, Print, DieCut) 🌟🌟🌟 */}
                         {currentQuot.items.map((item, index) => {
@@ -2297,28 +2180,11 @@ const getItemSummaryList = (quot) => {
                                                                 <InputGroup label="M (พับ)" type="number" min="0" placeholder="0.5" value={item.dimM} onChange={(v) => handleUpdateItem(index, 'dimM', v)} />
                                                             </div>
                                                         </div>
-                                                        {/* 🌟 3. กรองเฉพาะกระดาษ Active และทำการ Snapshot ราคา */}
-                                                        {(() => {
-                                                            const availablePapers = paperTypes.filter(p => p.isActive !== false || p.id?.toString() === item.paperTypeId?.toString());
-                                                            return (
-                                                                <InputGroup 
-                                                                    label="เลือกเกรดกระดาษ (Paper Type)" type="select" required
-                                                                    options={availablePapers.map(p => ({
-                                                                        label: `${p.isActive === false ? '[ยกเลิกแล้ว] ' : ''}${p.codeName} (${p.flute}-Flute) - ${p.price} ฿/ตร.ฟุต`, 
-                                                                        value: p.id
-                                                                    }))}
-                                                                    value={item.paperTypeId} 
-                                                                    onChange={(v) => {
-                                                                        const selectedPaper = paperTypes.find(p => p.id?.toString() === v?.toString());
-                                                                        const newItems = [...currentQuot.items];
-                                                                        newItems[index].paperTypeId = v;
-                                                                        // 📌 บันทึกราคา ณ ปัจจุบัน ฝังลงไปในบิลนี้เลย!
-                                                                        newItems[index].paperPriceSnapshot = selectedPaper ? parseFloat(selectedPaper.price || 0) : 0;
-                                                                        setCurrentQuot({ ...currentQuot, items: newItems });
-                                                                    }}
-                                                                />
-                                                            );
-                                                        })()}
+                                                        <InputGroup 
+                                                            label="เลือกเกรดกระดาษ (Paper Type)" type="select" required
+                                                            options={paperTypes.map(p => ({label: `${p.codeName} (${p.flute}-Flute) - ${p.price} ฿/ตร.ฟุต`, value: p.id}))}
+                                                            value={item.paperTypeId} onChange={(v) => handleUpdateItem(index, 'paperTypeId', v)}
+                                                        />
                                                         {iDetail.formulaStr && (
                                                             <details className="group border border-blue-200 rounded-lg bg-white shadow-sm">
                                                                 <summary className="w-full bg-blue-50/50 px-4 py-3 flex justify-between items-center text-blue-800 font-semibold hover:bg-blue-100 transition-colors cursor-pointer list-none">
@@ -2422,22 +2288,6 @@ const getItemSummaryList = (quot) => {
                                     <InputGroup label="คาดการณ์วันรับสินค้า (Lead Time)" type="number" value={currentQuot.leadTime} onChange={(v) => setCurrentQuot({...currentQuot, leadTime: v})} suffix="วัน" />
                                 </div>
                             </div>
-                        </div>
-
-                        {/* 🌟 นำโค้ดก้อนนี้ไปวางต่อท้ายได้เลย 🌟 */}
-                        <div className="mt-4 pt-4 border-t border-gray-100">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">รูปแบบการแสดงราคาใน PDF</label>
-                            <div className="flex flex-col xl:flex-row gap-3">
-                                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all ${currentQuot.displayMode !== 'detailed' ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                                    <input type="radio" className="w-4 h-4 text-blue-600" checked={currentQuot.displayMode !== 'detailed'} onChange={() => setCurrentQuot({...currentQuot, displayMode: 'per-box'})}/> 
-                                    <span className="text-sm">รวมราคาต่อใบ (Default)</span>
-                                </label>
-                                <label className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all ${currentQuot.displayMode === 'detailed' ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-sm' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                                    <input type="radio" className="w-4 h-4 text-blue-600" checked={currentQuot.displayMode === 'detailed'} onChange={() => setCurrentQuot({...currentQuot, displayMode: 'detailed'})}/> 
-                                    <span className="text-sm">แจกแจงรายละเอียด</span>
-                                </label>
-                            </div>
-                        </div>
                         </div>
 
                         <div className="border rounded-lg p-5 border-gray-200 bg-white shadow-sm">
@@ -2806,23 +2656,9 @@ const getItemSummaryList = (quot) => {
                 <InputGroup label="Note (หมายเหตุ)" type="textarea" value={formData.note} onChange={(v) => setFormData({...formData, note: v})} />
             </>
         );
-    } else if (activeSubTab === 'paper') {
+    }  else if (activeSubTab === 'paper') {
         formContent = (
             <>
-                {/* 🌟 1. เพิ่ม Checkbox สถานะการใช้งาน */}
-                <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-                    <label className="flex items-center gap-2 cursor-pointer w-fit">
-                        <input 
-                            type="checkbox" 
-                            className="w-5 h-5 text-blue-600 rounded cursor-pointer"
-                            checked={formData.isActive !== false} 
-                            onChange={(e) => setFormData({...formData, isActive: e.target.checked})}
-                        />
-                        <span className="font-bold text-gray-700">สถานะ: เปิดใช้งาน (Active)</span>
-                    </label>
-                    <p className="text-xs text-gray-500 mt-1 ml-7">หากนำติ๊กถูกออก กระดาษนี้จะถูกซ่อนไม่ให้เลือกในบิลใหม่ แต่บิลเก่าจะยังแสดงผลได้ปกติ</p>
-                </div>
-
                 <div className="grid grid-cols-2 gap-4">
                     <InputGroup label="ชื่อรหัส (Code Name)" value={formData.codeName} onChange={(v) => setFormData({...formData, codeName: v})} required placeholder="e.g. P-KA125-B" />
                     <InputGroup label="Global Name" value={formData.globalName} onChange={(v) => setFormData({...formData, globalName: v})} placeholder="e.g. KA125/CA125 B-Flute" />
@@ -3038,117 +2874,6 @@ const renderPreviewModal = () => {
         </Modal>
     );
   };
-  // 🌟🌟🌟 จุดที่ 3: ระบบประมวลผลการ Copy-Paste และหน้าต่าง 🌟🌟🌟
-  const handleProcessBulkImport = async () => {
-        if (!bulkImportData.rawText.trim()) return alert("กรุณาวางข้อมูลตารางในช่องข้อความ");
-        if (!bulkImportData.flute) return alert("กรุณาเลือกลอนกระดาษ");
-        if (!bulkImportData.supplier) return alert("กรุณาระบุชื่อ Supplier");
-
-        const rows = bulkImportData.rawText.split('\n');
-        const newPapers = [];
-        
-        rows.forEach(row => {
-            const cols = row.trim().split(/\t/); // แยกคอลัมน์ด้วยปุ่ม Tab (จากการก๊อปใน Excel/PDF)
-            
-            // เช็คว่ามีข้อมูลอย่างน้อย 2 คอลัมน์ (ชื่อ และ MOQ) ถึงจะทำงาน
-            if (cols.length >= 2 && cols[0].trim() !== '') {
-                const originalName = cols[0].trim();
-                const moqVal = cols[1] ? cols[1].replace(/,/g, '').trim() : '0';
-                const priceVal = cols[2] ? cols[2].replace(/,/g, '').trim() : '0';
-
-                // 1. ดึงรหัสสี (2 ตัวอักษรแรก)
-                let materialCode = originalName.substring(0, 2).toUpperCase();
-                
-                // 2. ประกอบชื่อกระดาษ + Suffix
-                const finalCodeName = bulkImportData.suffix ? `${originalName} ${bulkImportData.suffix}`.trim() : originalName;
-
-                // 3. ประกอบ Global Name (รหัสสี + ลอน + ซัพพลายเออร์)
-                const globalName = `${materialCode} ${bulkImportData.flute}-Flute ${bulkImportData.supplier}`;
-
-                newPapers.push({
-                    codeName: finalCodeName,
-                    globalName: globalName,
-                    materialCode: materialCode,
-                    flute: bulkImportData.flute,
-                    wallType: bulkImportData.wallType,
-                    widths: bulkImportData.widths,
-                    price: priceVal,
-                    moq: moqVal,
-                    supplier: bulkImportData.supplier,
-                    note: bulkImportData.note,
-                    isActive: true, // ค่าเริ่มต้นให้เปิดใช้งานเสมอ
-                    createdBy: userEmail || 'System',
-                    createdDate: getDateTime(),
-                    lastModifiedBy: userEmail || 'System',
-                    lastModifiedDate: getDateTime()
-                });
-            }
-        });
-
-        if (newPapers.length === 0) {
-            return alert("ไม่พบข้อมูลที่สามารถนำเข้าได้ กรุณาตรวจสอบว่าคัดลอกมาถูกต้อง (แยกคอลัมน์ด้วย Tab)");
-        }
-
-        if (!window.confirm(`ระบบพบข้อมูลกระดาษทั้งหมด ${newPapers.length} รายการ\nคุณต้องการบันทึกเข้าระบบใช่หรือไม่?`)) return;
-
-        try {
-            // บันทึกลง Firebase ทีละรายการพร้อมกัน
-            const promises = newPapers.map(paper => addDoc(collection(db, "paperTypes"), paper));
-            const docs = await Promise.all(promises);
-            
-            // อัปเดตตารางหน้าจอ
-            const addedPapers = newPapers.map((p, idx) => ({ id: docs[idx].id, ...p }));
-            setPaperTypes(prev => [...prev, ...addedPapers]);
-            
-            alert(`✅ นำเข้าข้อมูลสำเร็จ ${newPapers.length} รายการ!`);
-            setModalMode(null);
-        } catch (error) {
-            alert("เกิดข้อผิดพลาดในการบันทึก: " + error.message);
-        }
-  };
-
-  const renderBulkImportModal = () => {
-        if (modalMode !== 'bulkImportPaper') return null;
-        
-        return (
-            <Modal
-                isOpen={true} title="นำเข้ากระดาษหลายรายการ (Bulk Import)" onClose={() => setModalMode(null)} size="lg"
-                footer={<><Button variant="secondary" onClick={() => setModalMode(null)}>ยกเลิก</Button> <Button variant="success" icon={Save} onClick={handleProcessBulkImport}>ประมวลผลและบันทึก</Button></>}
-            >
-                <div className="space-y-4">
-                    <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg text-sm text-blue-800">
-                        <p className="font-bold mb-1">💡 วิธีใช้งาน (แนะนำให้ Copy จาก Excel):</p>
-                        <ul className="list-disc pl-5 space-y-1">
-                            <li>จัดเรียงคอลัมน์ตามนี้: <strong>คอลัมน์ 1: ชื่อกระดาษ, คอลัมน์ 2: MOQ, คอลัมน์ 3: ราคา</strong></li>
-                            <li>ก๊อปปี้ข้อมูลในตาราง (ไม่ต้องเอาหัวตาราง) มาวางในช่องด้านล่าง</li>
-                            <li>ระบบจะดึงรหัสสีจาก 2 ตัวอักษรแรกของชื่อ และประกอบ Global Name ให้อัตโนมัติ</li>
-                        </ul>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                        <InputGroup label="1. ชื่อซัพพลายเออร์ (Supplier) *" value={bulkImportData.supplier} onChange={v => setBulkImportData({...bulkImportData, supplier: v})} required />
-                        <InputGroup label="2. ลอนกระดาษ (Flute) *" type="select" options={['A','B','C','E','BC','CE']} value={bulkImportData.flute} onChange={v => setBulkImportData({...bulkImportData, flute: v})} required />
-                        <InputGroup label="3. ชั้นผนัง (Wall Type)" type="select" options={['Single Wall','Double Wall']} value={bulkImportData.wallType} onChange={v => setBulkImportData({...bulkImportData, wallType: v})} />
-                        <InputGroup label="4. หน้ากว้าง (Widths)" value={bulkImportData.widths} onChange={v => setBulkImportData({...bulkImportData, widths: v})} placeholder="เช่น 48, 60" />
-                        <InputGroup label="5. ชื่อต่อท้าย (Suffix)" value={bulkImportData.suffix} onChange={v => setBulkImportData({...bulkImportData, suffix: v})} placeholder="เช่น (Q1/2026)" helpText="จะไปต่อท้ายชื่อ Code Name ทุกรายการ" />
-                        <InputGroup label="6. Note (บันทึกช่วยจำ)" value={bulkImportData.note} onChange={v => setBulkImportData({...bulkImportData, note: v})} />
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-bold text-gray-700 mb-2">วางข้อมูลตาราง (Paste Data Here) <span className="text-red-500">*</span></label>
-                        <textarea 
-                            className="w-full h-48 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm whitespace-pre overflow-auto bg-gray-50"
-                            placeholder="KA125/I125&#9;500&#9;15.50&#10;KS170/I125&#9;1000&#9;22.00"
-                            value={bulkImportData.rawText}
-                            onChange={(e) => setBulkImportData({...bulkImportData, rawText: e.target.value})}
-                        ></textarea>
-                    </div>
-                </div>
-            </Modal>
-        );
-  };
-  // 🌟🌟🌟 จบจุดที่ 3 🌟🌟🌟
-
   return (
     <div className="min-h-screen bg-gray-100 font-sans text-gray-900 pb-20">
       <div className="max-w-7xl mx-auto p-6">
@@ -3305,8 +3030,6 @@ const renderPreviewModal = () => {
       {renderConfirmationModal()}
       {renderFormModal()}
       {renderPreviewModal()}
-      {/* 🌟 จุดที่ 4: แทรกตรงนี้ครับ เพื่อให้ Modal ถูกเรียกใช้งาน */}
-      {renderBulkImportModal()}
     </div>
   );
 }

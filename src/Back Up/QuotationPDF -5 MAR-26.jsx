@@ -67,10 +67,10 @@ export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
   const factor = totals?.factor || 1;
   const shippingAddress = quot.shippingType === 'pickup' ? 'ลูกค้ามารับเอง (Pick up at Factory)' : (customerFull?.addressShip || '-');
 
-const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหมดมาเช็ค
-
   const renderTableRows = () => {
     const items = totals?.itemsCalc || [];
+    
+    // 🌟 หั่นข้อมูลเป็นแพ็ค แพ็คละ 2 รายการ 🌟
     const chunkedItems = [];
     for (let i = 0; i < items.length; i += 2) {
       chunkedItems.push(items.slice(i, i + 2));
@@ -79,21 +79,14 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
     let rowNum = 1;
     const allPages = [];
 
+    // วนลูปตามจำนวนแพ็ค
     chunkedItems.forEach((chunk, chunkIndex) => {
         const currentChunkRows = [];
 
+        // วนลูปกล่องภายในแพ็ค (ไม่เกิน 2 กล่อง)
         chunk.forEach((iCalc) => {
-            let sellingBoxTotal = 0;
-            let sellingBoxUnit = 0;
-
-            // ✨ เลือกดึงราคามาโชว์ตามโหมดที่เลือก
-            if (isPerBox) {
-                sellingBoxTotal = iCalc.perBoxFinalTotal || 0;
-                sellingBoxUnit = iCalc.qty > 0 ? sellingBoxTotal / iCalc.qty : 0;
-            } else {
-                sellingBoxTotal = (iCalc.rawBoxCost * iCalc.qty) * factor;
-                sellingBoxUnit = iCalc.qty > 0 ? sellingBoxTotal / iCalc.qty : 0;
-            }
+            const sellingBoxTotal = (iCalc.rawBoxCost * iCalc.qty) * factor;
+            const sellingBoxUnit = iCalc.qty > 0 ? sellingBoxTotal / iCalc.qty : 0;
             
             const itemGroupRows = [];
 
@@ -104,8 +97,6 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
                 <View style={styles.colDesc}>
                   <Text style={{ fontWeight: 'bold', color: PRIMARY_COLOR }}>รายการที่ {rowNum}: {iCalc.boxName}</Text>
                   <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {iCalc.paperName} | ขนาด: {iCalc.dim} cm</Text>
-                  {/* แสดง Note เล็กๆ ว่าราคานี้เหมามาแล้วนะ ถ้ารวมบิล */}
-                  {isPerBox && <Text style={{ fontSize: 11, color: '#059669', marginTop: 2 }}>*ราคารวม</Text>}
                 </View>
                 <Text style={styles.colQty}>{iCalc.qty.toLocaleString()}</Text>
                 <Text style={styles.colUnit}>{sellingBoxUnit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
@@ -113,29 +104,27 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
               </View>
             );
 
-            // 2. แถวบล็อคพิมพ์ (โชว์เฉพาะถ้าไม่ได้รวบยอดบิล)
-            if (!isPerBox) {
-                (iCalc.blocks || []).forEach((block, bIdx) => {
-                  const rawPrice = parseFloat(block.price) || 0;
-                  if (rawPrice > 0) {
-                    const sellPrice = rawPrice * factor;
-                    itemGroupRows.push(
-                      <View style={styles.tableRow} key={`block-${rowNum}-${bIdx}`}>
-                        <Text style={styles.colNo}></Text>
-                        <View style={styles.colDesc}>
-                          <Text style={{ color: '#4b5563' }}>- ค่าบล็อคแม่พิมพ์ (ขนาด {block.w}x{block.l} นิ้ว)</Text>
-                        </View>
-                        <Text style={styles.colQty}>1</Text>
-                        <Text style={styles.colUnit}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-                        <Text style={styles.colTotal}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
-                      </View>
-                    );
-                  }
-                });
-            }
+            // 2. แถวบล็อคพิมพ์
+            (iCalc.blocks || []).forEach((block, bIdx) => {
+              const rawPrice = parseFloat(block.price) || 0;
+              if (rawPrice > 0) {
+                const sellPrice = rawPrice * factor;
+                itemGroupRows.push(
+                  <View style={styles.tableRow} key={`block-${rowNum}-${bIdx}`}>
+                    <Text style={styles.colNo}></Text>
+                    <View style={styles.colDesc}>
+                      <Text style={{ color: '#4b5563' }}>- ค่าบล็อคแม่พิมพ์ (ขนาด {block.w}x{block.l} นิ้ว)</Text>
+                    </View>
+                    <Text style={styles.colQty}>1</Text>
+                    <Text style={styles.colUnit}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                    <Text style={styles.colTotal}>{sellPrice.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
+                  </View>
+                );
+              }
+            });
 
-            // 3. แถวใบมีด (โชว์เฉพาะถ้าไม่ได้รวบยอดบิล)
-            if (!isPerBox && iCalc.dieCutCost > 0) {
+            // 3. แถวใบมีด
+            if (iCalc.dieCutCost > 0) {
               const sellingDieCut = iCalc.dieCutCost * factor;
               itemGroupRows.push(
                 <View style={styles.tableRow} key={`diecut-${rowNum}`}>
@@ -151,16 +140,18 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
               );
             }
 
+            // ยัดก้อนของสินค้านี้ลงไปใน Chunk ปัจจุบัน (ใช้ wrap=false ป้องกันฉีกขาดภายในไอเทมเดียวกัน)
             currentChunkRows.push(
                 <View wrap={false} style={{ flexDirection: 'column' }} key={`group-${rowNum}`}>
                     {itemGroupRows}
                 </View>
             );
+            
             rowNum++;
         });
 
-        // 4. ค่า Setup & ค่าส่ง (โชว์ตอนจบแพ็คสุดท้าย และ ต้องไม่ใช่โหมดรวบยอด)
-        if (!isPerBox && chunkIndex === chunkedItems.length - 1) {
+        // 4. ถ้าเป็น "แพ็คสุดท้าย" ให้บวกค่าจัดส่งและค่า Setup เข้าไป
+        if (chunkIndex === chunkedItems.length - 1) {
             const globalRows = [];
             const sellingSetup = (totals?.setupCost || 0) * factor;
             if (sellingSetup > 0) {
@@ -197,6 +188,7 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
             }
         }
 
+        // 🌟 แทรกคำสั่ง Break หากไม่ใช่แพ็คแรกสุด 🌟
         allPages.push(
             <View key={`chunk-${chunkIndex}`} break={chunkIndex > 0}>
                 {currentChunkRows}

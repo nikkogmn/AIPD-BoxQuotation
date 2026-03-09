@@ -105,7 +105,7 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
                   <Text style={{ fontWeight: 'bold', color: PRIMARY_COLOR }}>รายการที่ {rowNum}: {iCalc.boxName}</Text>
                   <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {iCalc.paperName} | ขนาด: {iCalc.dim} cm</Text>
                   {/* แสดง Note เล็กๆ ว่าราคานี้เหมามาแล้วนะ ถ้ารวมบิล */}
-                  {isPerBox && <Text style={{ fontSize: 11, color: '#059669', marginTop: 2 }}>*ราคารวม</Text>}
+                  {isPerBox && <Text style={{ fontSize: 11, color: '#059669', marginTop: 2 }}>* ราคารวมค่าแม่พิมพ์ และแบบใบมีดแล้ว</Text>}
                 </View>
                 <Text style={styles.colQty}>{iCalc.qty.toLocaleString()}</Text>
                 <Text style={styles.colUnit}>{sellingBoxUnit.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</Text>
