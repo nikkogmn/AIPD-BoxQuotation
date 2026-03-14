@@ -326,11 +326,6 @@ const BoxSchematic = ({ codeName, globalName, dimensions = {}, baseType }) => {
 };
 
 // --- Helpers ---
-const roundUpQuarter = (value) => {
-    if (!value) return 0;
-    return Math.ceil(value * 4) / 4;
-};
-
 const getColorFromCode = (code) => {
     const map = {
         'KA': '#d4a373', 'KI': '#e9d8a6', 'KS': '#fefae0', 'CA': '#bc6c25', 'W': '#ffffff',
@@ -685,13 +680,11 @@ const [currentQuot, setCurrentQuot] = useState({
 // --- Calculation Logic (รองรับ Multi-items กล่องหลายใบ) ---
 // --- Calculation Logic (Multi-items) ---
 // --- Calculation Logic (รองรับกำไรแยกประเภท) ---
- const calculateTotals = () => {
+  const calculateTotals = () => {
+      let totalBoxCost = 0; 
+      let totalBlockCost = 0; 
+      let totalDieCutCost = 0;
       let itemsDetail = [];
-      
-      // ✨ สร้างตัวแปรมาเก็บยอดรวมของ "ราคาขายที่ปัดเศษแล้ว" แทนต้นทุนดิบ
-      let sumSellBoxCost = 0; 
-      let sumSellBlockCost = 0; 
-      let sumSellDieCutCost = 0;
 
       const marginBox = (parseFloat(currentQuot.profitMarginBox) || 0) / 100;
       const marginBlock = (parseFloat(currentQuot.profitMarginBlock) || 0) / 100;
@@ -716,40 +709,42 @@ const [currentQuot, setCurrentQuot] = useState({
           }
           
           const areaSqFt = areaSqCm / 929.0304; 
+          // 🌟 4. ดึงราคาจากที่ Snapshot ไว้ก่อน ถ้าไม่มีค่อยไปดึงจาก Master
           const pPrice = item.paperPriceSnapshot !== undefined ? parseFloat(item.paperPriceSnapshot) : (paper ? parseFloat(paper.price) : 0);
           
-          // คำนวณต้นทุนดิบ และราคาขายที่ปัดเศษ
+          // 1. ต้นทุนกล่องและสี
           const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
-          const sellBoxCost = roundUpQuarter(rawBoxCost + (rawBoxCost * marginBox));
+          const sellBoxCost = rawBoxCost + (rawBoxCost * marginBox); // บวกกำไร
 
+          // 2. ต้นทุนบล็อคพิมพ์
           const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
-          const sellBlockCost = roundUpQuarter(blockCost + (blockCost * marginBlock));
+          const sellBlockCost = blockCost + (blockCost * marginBlock); // บวกกำไร
 
+          // 3. ต้นทุนใบมีด
           let dieCutCost = 0; 
           if (item.dieCutId && item.dieCutW && item.dieCutL) {
               const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
               dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
           }
-          const sellDieCutCost = roundUpQuarter(dieCutCost + (dieCutCost * marginDieCut));
+          const sellDieCutCost = dieCutCost + (dieCutCost * marginDieCut); // บวกกำไร
 
           const qty = parseInt(item.quantity) || 1;
           
-          // ✨ จับยอดราคาขายที่ปัดเศษแล้ว โยนเข้ายอดรวมสะสม
-          sumSellBoxCost += (sellBoxCost * qty);
-          sumSellBlockCost += sellBlockCost;
-          sumSellDieCutCost += sellDieCutCost;
+          totalBoxCost += (rawBoxCost * qty);
+          totalBlockCost += blockCost;
+          totalDieCutCost += dieCutCost;
 
+          // สร้าง Detail เพื่อโชว์ในหน้าจอ (โชว์ราคาที่บวกกำไรแล้ว)
           const blockDetails = [
-              ...(item.printBlocks1 || []).map(b => ({ name: 'บล็อคพิมพ์ (สี 1)', size: `${b.w}x${b.l}`, price: roundUpQuarter(parseFloat(b.price || 0) * (1 + marginBlock)) })),
-              ...(item.printBlocks2 || []).map(b => ({ name: 'บล็อคพิมพ์ (สี 2)', size: `${b.w}x${b.l}`, price: roundUpQuarter(parseFloat(b.price || 0) * (1 + marginBlock)) }))
+              ...(item.printBlocks1 || []).map(b => ({ name: 'บล็อคพิมพ์ (สี 1)', size: `${b.w}x${b.l}`, price: parseFloat(b.price || 0) * (1 + marginBlock) })),
+              ...(item.printBlocks2 || []).map(b => ({ name: 'บล็อคพิมพ์ (สี 2)', size: `${b.w}x${b.l}`, price: parseFloat(b.price || 0) * (1 + marginBlock) }))
           ];
 
           itemsDetail.push({
               formulaStr: selBox?.formula, safeFormula, areaSqCm, areaSqFt, paperPrice: pPrice,
-              rawBoxCost: rawBoxCost, // ✨ เพิ่มการเก็บค่าต้นทุนดิบส่งไปหน้าจอ
-              boxCost: sellBoxCost, 
-              blockCost: sellBlockCost, 
-              dieCutCost: sellDieCutCost, 
+              boxCost: sellBoxCost, // ราคาขาย
+              blockCost: sellBlockCost, // ราคาขาย
+              dieCutCost: sellDieCutCost, // ราคาขาย
               qty,
               boxName: selBox?.codeName || 'ไม่ระบุรูปแบบ',
               dim: `${W}x${D}x${H}`,
@@ -758,12 +753,21 @@ const [currentQuot, setCurrentQuot] = useState({
           });
       });
 
+      // ค่าใช้จ่ายส่วนกลาง (ไม่มีกำไร)
       const shipCost = currentQuot.shippingType === 'delivery' ? (parseFloat(currentQuot.shippingCost) || 0) : 0;
       const setup = parseFloat(currentQuot.setupCost) || 0;
       
-      // ✨ เปลี่ยนการคิดยอดรวม ให้ใช้ตัวแปรราคาขายที่รวมกันมาแล้วตรงๆ 
-      const totalWithProfit = sumSellBoxCost + sumSellBlockCost + sumSellDieCutCost + shipCost + setup;
+      const grandTotalRawCost = totalBoxCost + totalBlockCost + totalDieCutCost + shipCost + setup;
+      
+      // ยอดรวมหลังบวกกำไรแต่ละส่วน
+      const profitBoxAmt = totalBoxCost * marginBox;
+      const profitBlockAmt = totalBlockCost * marginBlock;
+      const profitDieCutAmt = totalDieCutCost * marginDieCut;
+      const totalProfitAmount = profitBoxAmt + profitBlockAmt + profitDieCutAmt;
+      
+      const totalWithProfit = grandTotalRawCost + totalProfitAmount;
 
+      // ส่วนลดคิดจากยอดที่บวกกำไรแล้ว
       const discountAmount = totalWithProfit * ((parseFloat(currentQuot.discount) || 0) / 100);
       const totalAfterDiscount = totalWithProfit - discountAmount;
 
@@ -772,8 +776,9 @@ const [currentQuot, setCurrentQuot] = useState({
 
       return {
           itemsDetail,
+          totalBoxCost, totalBlockCost, totalDieCutCost,
           shipCost, setupCost: setup,
-          totalWithProfit, totalAfterDiscount, netTotal
+          grandTotalRawCost, totalProfitAmount, totalWithProfit, totalAfterDiscount, netTotal
       };
   };
   const totals = useMemo(() => calculateTotals(), [currentQuot, paperTypes, boxStyles, dieCutMolds, printBlocks]);
@@ -880,7 +885,6 @@ const [currentQuot, setCurrentQuot] = useState({
 // --- ฟังก์ชันดาวน์โหลด PDF (ส่งข้อมูลให้ครบ 6 ลำดับ ป้องกันข้อมูลลูกค้าหาย) ---
 // --- ฟังก์ชันดาวน์โหลด PDF (อัปเดตกำไรแยกส่วน) ---
 // 🌟 นำไปแทนที่ฟังก์ชัน handleDownloadPDF เดิม 🌟
-// 🌟 นำไปแทนที่ฟังก์ชัน handleDownloadPDF เดิมทั้งหมด 🌟
 const handleDownloadPDF = (quot) => {
     console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
     const exportFileName = generateExportFileName(quot);
@@ -894,7 +898,7 @@ const handleDownloadPDF = (quot) => {
     let sumSellingPrice = 0;
     const itemsRaw = [];
     
-    // Pass 1: คำนวณราคาทั้งหมด (ปัดเศษขึ้นทีละ 0.25 เสมอ)
+    // Pass 1: คำนวณราคาทั้งหมด
     (quot.items || []).forEach(item => {
         const boxStyle = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
         const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
@@ -908,21 +912,20 @@ const handleDownloadPDF = (quot) => {
             } catch (e) {}
         }
         const areaSqFt = areaSqCm / 929.0304; 
+        // 🌟 4. ดึงราคาจากที่ Snapshot ไว้ก่อน ถ้าไม่มีค่อยไปดึงจาก Master
         const pPrice = item.paperPriceSnapshot !== undefined ? parseFloat(item.paperPriceSnapshot) : (paper ? parseFloat(paper.price) : 0);
         
         const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
-        const sellBoxCost = roundUpQuarter(rawBoxCost * (1 + marginBox));
-        
+        const sellBoxCost = rawBoxCost * (1 + marginBox);
         const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
-        const sellBlockCost = roundUpQuarter(blockCost * (1 + marginBlock));
+        const sellBlockCost = blockCost * (1 + marginBlock);
 
         let dieCutCost = 0; 
         if (item.dieCutId && item.dieCutW && item.dieCutL) {
             const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
             dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
         }
-        const sellDieCutCost = roundUpQuarter(dieCutCost * (1 + marginDieCut));
-        
+        const sellDieCutCost = dieCutCost * (1 + marginDieCut);
         const qty = parseInt(item.quantity) || 1;
         const itemSellingTotal = (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
         
@@ -940,16 +943,13 @@ const handleDownloadPDF = (quot) => {
 
     // Pass 2: เตรียมข้อมูลให้ PDF
     const itemsCalc = itemsRaw.map(raw => {
-        // ✨ จุดที่เพิ่มการปัดเศษ: ให้บล็อคพิมพ์แต่ละชิ้นถูกปัดเศษด้วย
-        const blocks = [...(raw.itemRef.printBlocks1||[]), ...(raw.itemRef.printBlocks2||[])].map(b => ({
-            ...b, 
-            price: roundUpQuarter(parseFloat(b.price||0) * (1 + marginBlock)) 
-        }));
+        const blocks = [...(raw.itemRef.printBlocks1||[]), ...(raw.itemRef.printBlocks2||[])].map(b => ({...b, price: parseFloat(b.price||0) * (1 + marginBlock)}));
         
+        // ✨ คำนวณต้นทุนรวมต่อใบ (กระจายค่าจัดส่ง+Setup เข้าไปเนียนๆ)
         const ratio = sumSellingPrice > 0 ? (raw.itemSellingTotal / sumSellingPrice) : 0;
         const itemOverhead = (setup + shipCost) * ratio; 
         const itemTotalWithOverhead = raw.itemSellingTotal + itemOverhead;
-        const perBoxFinalTotal = itemTotalWithOverhead * factor; 
+        const perBoxFinalTotal = itemTotalWithOverhead * factor; // หักส่วนลดเรียบร้อย
 
         return {
             boxName: boxStyles.find(b => b.id?.toString() === raw.itemRef.boxStyleId?.toString())?.codeName || 'ไม่ระบุรูปแบบ',
@@ -1980,16 +1980,16 @@ const getItemSummaryList = (quot) => {
         const pPrice = item.paperPriceSnapshot !== undefined ? parseFloat(item.paperPriceSnapshot) : (paper ? parseFloat(paper.price) : 0);
         
         const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
-        const sellBoxCost = roundUpQuarter(rawBoxCost * (1 + marginBox)); // ✨ ปัดเศษ
+        const sellBoxCost = rawBoxCost * (1 + marginBox);
         const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
-        const sellBlockCost = roundUpQuarter(blockCost * (1 + marginBlock)); // ✨ ปัดเศษ
+        const sellBlockCost = blockCost * (1 + marginBlock);
 
         let dieCutCost = 0; 
         if (item.dieCutId && item.dieCutW && item.dieCutL) {
             const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
             dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
         }
-        const sellDieCutCost = roundUpQuarter(dieCutCost * (1 + marginDieCut)); // ✨ ปัดเศษ
+        const sellDieCutCost = dieCutCost * (1 + marginDieCut);
         const qty = parseInt(item.quantity) || 1;
         const itemSellingTotal = (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
         sumSellingPrice += itemSellingTotal;
@@ -2389,19 +2389,9 @@ const getItemSummaryList = (quot) => {
                                                                         <span className="font-medium text-gray-500 min-w-[150px]">3. พื้นที่:</span>
                                                                         <div className="text-right"><div className="font-semibold">{iDetail.areaSqCm?.toLocaleString(undefined, {maximumFractionDigits: 2})} ตร.ซม.</div><div className="text-xs text-gray-400 mt-1">÷ 929.0304 = <span className="text-blue-600 font-medium">{iDetail.areaSqFt?.toLocaleString(undefined, {maximumFractionDigits: 4})} ตร.ฟุต</span></div></div>
                                                                     </div>
-                                                                    <div className="flex flex-col md:flex-row md:justify-between items-center pt-2 gap-2 bg-gray-50 p-3 rounded-lg border border-gray-200">
-                                                                        <span className="font-bold text-gray-700">4. สรุปต้นทุนกระดาษ/ใบ:</span>
-                                                                        <div className="text-right flex items-center justify-end flex-wrap">
-                                                                            <span className="text-sm text-gray-600">{iDetail.areaSqFt?.toLocaleString(undefined, {maximumFractionDigits: 4})} ตร.ฟุต × {iDetail.paperPrice} ฿</span>
-                                                                            <span className="mx-2 text-gray-400">=</span>
-                                                                            <span className="font-bold text-lg text-gray-700">{iDetail.rawBoxCost?.toLocaleString(undefined, {maximumFractionDigits: 4})} ฿</span>
-                                                                        </div>
-                                                                    </div>
-                                                                    <div className="flex flex-col md:flex-row md:justify-between items-center pt-2 gap-2 bg-green-50 p-3 rounded-lg border border-green-100 mt-2">
-                                                                        <span className="font-bold text-green-800">5. ราคาขาย/ใบ (+กำไรและปัดเศษ):</span>
-                                                                        <div className="text-right flex items-center justify-end flex-wrap">
-                                                                            <span className="font-black text-xl text-green-700 underline decoration-green-300 underline-offset-4">{iDetail.boxCost?.toLocaleString(undefined, {minimumFractionDigits: 2})} ฿</span>
-                                                                        </div>
+                                                                    <div className="flex flex-col md:flex-row md:justify-between items-center pt-2 gap-2 bg-green-50 p-3 rounded-lg border border-green-100">
+                                                                        <span className="font-bold text-green-800">4. สรุปต้นทุนกระดาษ/ใบ:</span>
+                                                                        <div className="text-right flex items-center justify-end flex-wrap"><span className="text-sm text-green-700">{iDetail.areaSqFt?.toLocaleString(undefined, {maximumFractionDigits: 4})} ตร.ฟุต × {iDetail.paperPrice} ฿</span><span className="mx-2 text-green-400">=</span><span className="font-black text-xl text-green-700 underline decoration-green-300 underline-offset-4">{iDetail.boxCost?.toLocaleString(undefined, {maximumFractionDigits: 4})} ฿</span></div>
                                                                     </div>
                                                                 </div>
                                                             </details>
@@ -3365,7 +3355,7 @@ const renderPreviewModal = () => {
         </main>
       </div>
 
-      {/* {activeMainTab !== 'admin' && renderUnitToggle()} */}
+      {activeMainTab !== 'admin' && renderUnitToggle()}
       {renderConfirmationModal()}
       {renderFormModal()}
       {renderPreviewModal()}
