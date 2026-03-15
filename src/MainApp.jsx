@@ -876,13 +876,97 @@ const [currentQuot, setCurrentQuot] = useState({
       return `AIPD_QUOTATION_${safeCusName}_${createDay}${lastEditStr}.pdf`; 
   };
 
+const handleDownloadPDF = (quot) => {
+    console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
+    const exportFileName = generateExportFileName(quot);
+    const customerFull = customers.find(c => c.id?.toString() === quot.customerId?.toString()) || {};
+    const isPerBox = quot.displayMode !== 'detailed';
 
+    const marginBox = (parseFloat(quot.profitMarginBox) || 0) / 100;
+    const marginBlock = (parseFloat(quot.profitMarginBlock) || 0) / 100;
+    const marginDieCut = (parseFloat(quot.profitMarginDieCut) || 0) / 100;
+
+    let sumSellingPrice = 0;
+    const itemsRaw = [];
+    
+    // Pass 1: คำนวณราคาทั้งหมด (ปัดเศษขึ้นทีละ 0.25 เสมอ)
+    (quot.items || []).forEach(item => {
+        const boxStyle = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
+        const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
+        let areaSqCm = 0;
+        if (boxStyle && boxStyle.formula) {
+            try {
+                let safeFormula = boxStyle.formula.replace(/(\d)([WDHGM])/gi, '$1*$2');
+                const calcArea = new Function('W', 'D', 'H', 'G', 'M', `return ${safeFormula};`);
+                areaSqCm = calcArea(parseFloat(item.dimW)||0, parseFloat(item.dimD)||0, parseFloat(item.dimH)||0, parseFloat(item.dimG)||0, parseFloat(item.dimM)||0);
+                if (isNaN(areaSqCm) || areaSqCm < 0) areaSqCm = 0;
+            } catch (e) {}
+        }
+        const areaSqFt = areaSqCm / 929.0304; 
+        const pPrice = item.paperPriceSnapshot !== undefined ? parseFloat(item.paperPriceSnapshot) : (paper ? parseFloat(paper.price) : 0);
+        
+        const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
+        const sellBoxCost = roundUpQuarter(rawBoxCost * (1 + marginBox));
+        
+        const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
+        const sellBlockCost = roundUpQuarter(blockCost * (1 + marginBlock));
+
+        let dieCutCost = 0; 
+        if (item.dieCutId && item.dieCutW && item.dieCutL) {
+            const mold = dieCutMolds.find(d => d.id?.toString() === item.dieCutId?.toString());
+            dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
+        }
+        const sellDieCutCost = roundUpQuarter(dieCutCost * (1 + marginDieCut));
+        
+        const qty = parseInt(item.quantity) || 1;
+        const itemSellingTotal = (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
+        
+        sumSellingPrice += itemSellingTotal;
+        itemsRaw.push({ itemRef: item, sellBoxCost, sellBlockCost, sellDieCutCost, itemSellingTotal, qty });
+    });
+
+    const shipCost = quot.shippingType === 'delivery' ? (parseFloat(quot.shippingCost) || 0) : 0;
+    const setup = parseFloat(quot.setupCost) || 0;
+    const totalWithProfit = sumSellingPrice + setup + shipCost;
+    const discountPercent = parseFloat(quot.discount) || 0;
+    const totalAfterDiscount = totalWithProfit - (totalWithProfit * (discountPercent / 100));
+    const netTotal = totalAfterDiscount * 1.07;
+    const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
+
+    // Pass 2: เตรียมข้อมูลให้ PDF
+    const itemsCalc = itemsRaw.map(raw => {
+        // ✨ จุดที่เพิ่มการปัดเศษ: ให้บล็อคพิมพ์แต่ละชิ้นถูกปัดเศษด้วย
+        const blocks = [...(raw.itemRef.printBlocks1||[]), ...(raw.itemRef.printBlocks2||[])].map(b => ({
+            ...b, 
+            price: roundUpQuarter(parseFloat(b.price||0) * (1 + marginBlock)) 
+        }));
+        
+        const ratio = sumSellingPrice > 0 ? (raw.itemSellingTotal / sumSellingPrice) : 0;
+        const itemOverhead = (setup + shipCost) * ratio; 
+        const itemTotalWithOverhead = raw.itemSellingTotal + itemOverhead;
+        const perBoxFinalTotal = itemTotalWithOverhead * factor; 
+
+        return {
+            boxName: boxStyles.find(b => b.id?.toString() === raw.itemRef.boxStyleId?.toString())?.codeName || 'ไม่ระบุรูปแบบ',
+            paperName: paperTypes.find(p => p.id?.toString() === raw.itemRef.paperTypeId?.toString())?.codeName || '-',
+            dim: `${raw.itemRef.dimW||0}x${raw.itemRef.dimD||0}x${raw.itemRef.dimH||0}`,
+            qty: raw.qty,
+            rawBoxCost: raw.sellBoxCost, 
+            blocks, 
+            dieCutCost: raw.sellDieCutCost,
+            dieCutW: raw.itemRef.dieCutW,
+            dieCutL: raw.itemRef.dieCutL,
+            perBoxFinalTotal 
+        };
+    });
+
+    const calculatedTotals = { itemsCalc, setupCost: setup, shipCost: shipCost, totalAfterDiscount, netTotal, factor };
+    generateQuotationPDF(quot, companyData, calculatedTotals, {}, customerFull, exportFileName);
+};
 // --- ฟังก์ชันดาวน์โหลด PDF (ส่งข้อมูลให้ครบ 6 ลำดับ ป้องกันข้อมูลลูกค้าหาย) ---
 // --- ฟังก์ชันดาวน์โหลด PDF (อัปเดตกำไรแยกส่วน) ---
 // 🌟 นำไปแทนที่ฟังก์ชัน handleDownloadPDF เดิม 🌟
-// 🌟 นำไปแทนที่ฟังก์ชัน handleDownloadPDF เดิมทั้งหมด 🌟
-// --- ฟังก์ชันดาวน์โหลด PDF (ใบแจ้งหนี้) ---
-// --- ฟังก์ชันดาวน์โหลด PDF (ใบแจ้งหนี้) ---
+
 const handleDownloadInvoicePDF = (quot) => {
     console.log("กำลังเตรียมข้อมูลสร้าง PDF ใบแจ้งหนี้...", quot);
     

@@ -67,7 +67,7 @@ export const QuotationPDF = ({ quot, company, totals, customerFull, isInvoice })
   const factor = totals?.factor || 1;
   const shippingAddress = quot.shippingType === 'pickup' ? 'ลูกค้ามารับเอง (Pick up at Factory)' : (customerFull?.addressShip || '-');
 
-const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหมดมาเช็ค
+  const isPerBox = quot.displayMode !== 'detailed';
 
   const renderTableRows = () => {
     const items = totals?.itemsCalc || [];
@@ -86,7 +86,6 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
             let sellingBoxTotal = 0;
             let sellingBoxUnit = 0;
 
-            // ✨ เลือกดึงราคามาโชว์ตามโหมดที่เลือก
             if (isPerBox) {
                 sellingBoxTotal = iCalc.perBoxFinalTotal || 0;
                 sellingBoxUnit = iCalc.qty > 0 ? sellingBoxTotal / iCalc.qty : 0;
@@ -104,7 +103,6 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
                 <View style={styles.colDesc}>
                   <Text style={{ fontWeight: 'bold', color: PRIMARY_COLOR }}>รายการที่ {rowNum}: {iCalc.boxName}</Text>
                   <Text style={{ fontSize: 12, color: '#6b7280' }}>เกรด: {iCalc.paperName} | ขนาด: {iCalc.dim} cm</Text>
-                  {/* แสดง Note เล็กๆ ว่าราคานี้เหมามาแล้วนะ ถ้ารวมบิล */}
                   {isPerBox && <Text style={{ fontSize: 11, color: '#059669', marginTop: 2 }}>*ราคารวม</Text>}
                 </View>
                 <Text style={styles.colQty}>{iCalc.qty.toLocaleString()}</Text>
@@ -113,7 +111,7 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
               </View>
             );
 
-            // 2. แถวบล็อคพิมพ์ (โชว์เฉพาะถ้าไม่ได้รวบยอดบิล)
+            // 2. แถวบล็อคพิมพ์
             if (!isPerBox) {
                 (iCalc.blocks || []).forEach((block, bIdx) => {
                   const rawPrice = parseFloat(block.price) || 0;
@@ -134,7 +132,7 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
                 });
             }
 
-            // 3. แถวใบมีด (โชว์เฉพาะถ้าไม่ได้รวบยอดบิล)
+            // 3. แถวใบมีด
             if (!isPerBox && iCalc.dieCutCost > 0) {
               const sellingDieCut = iCalc.dieCutCost * factor;
               itemGroupRows.push(
@@ -159,7 +157,7 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
             rowNum++;
         });
 
-        // 4. ค่า Setup & ค่าส่ง (โชว์ตอนจบแพ็คสุดท้าย และ ต้องไม่ใช่โหมดรวบยอด)
+        // 4. ค่า Setup & ค่าส่ง
         if (!isPerBox && chunkIndex === chunkedItems.length - 1) {
             const globalRows = [];
             const sellingSetup = (totals?.setupCost || 0) * factor;
@@ -241,7 +239,12 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
           <View style={{ width: '40%', textAlign: 'right' }}>
             <Text><Text style={styles.infoLabel}>เลขที่เอกสาร : </Text>{quot.quotationNo || '-'}</Text>
             <Text><Text style={styles.infoLabel}>วันที่ออก{isInvoice ? 'ใบแจ้งหนี้' : 'ใบเสนอราคา'} : </Text>{formatThaiDate(quot.createdDate)}</Text>
-            <Text><Text style={styles.infoLabel}>ราคานี้มีผลถึงวันที่ : </Text>{formatThaiDate(quot.createdDate, 10)}</Text>
+            
+            {/* 🌟 ซ่อนบรรทัดนี้ถ้าเป็นใบแจ้งหนี้ (isInvoice = true) */}
+            {!isInvoice && (
+                <Text><Text style={styles.infoLabel}>ราคานี้มีผลถึงวันที่ : </Text>{formatThaiDate(quot.createdDate, 10)}</Text>
+            )}
+
           </View>
         </View>
 
@@ -256,7 +259,6 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
           {renderTableRows()}
         </View>
 
-        {/* ยอดเงินและลายเซ็น จะถูกผลักลงไปล่างสุดเสมอ */}
         <View wrap={false} style={{ marginTop: 20 }}>
             <View style={styles.summaryBox}>
                 <View style={styles.summaryRow}>
