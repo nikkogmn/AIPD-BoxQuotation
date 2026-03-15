@@ -7,7 +7,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 // อย่าลืมดึง storage มาจากไฟล์ firebase.js ด้วย
 import { db, storage } from './firebase';
 // --- Constants ---
-import { generateQuotationPDF, generateInvoicePDF } from './services/pdfGenerator';
+import { generateQuotationPDF } from './services/pdfGenerator'; // เช็ค Path ให้ตรงกับที่คุณสร้างไฟล์ด้วยนะครับ
 // ถ้าโปรเจกต์คุณไม่ได้ใช้ react-icons ก็ข้ามบรรทัด FiDownload ไปได้เลยครับ ใช้เป็นรูป 📄 หรือ SVG ของคุณเองได้
 const INDUSTRY_TYPES = [
     "ผลไม้สด (Fresh Fruit)",
@@ -881,29 +881,12 @@ const [currentQuot, setCurrentQuot] = useState({
 // --- ฟังก์ชันดาวน์โหลด PDF (อัปเดตกำไรแยกส่วน) ---
 // 🌟 นำไปแทนที่ฟังก์ชัน handleDownloadPDF เดิม 🌟
 // 🌟 นำไปแทนที่ฟังก์ชัน handleDownloadPDF เดิมทั้งหมด 🌟
-// --- ฟังก์ชันดาวน์โหลด PDF (ใบแจ้งหนี้) ---
-// --- ฟังก์ชันดาวน์โหลด PDF (ใบแจ้งหนี้) ---
-const handleDownloadInvoicePDF = (quot) => {
-    console.log("กำลังเตรียมข้อมูลสร้าง PDF ใบแจ้งหนี้...", quot);
-    
-    // 1. สร้างชื่อไฟล์ INVOICE
-    const rawCusName = customers.find(c => c.id?.toString() === quot.customerId?.toString())?.name || 'UnknownCustomer';
-    const safeCusName = rawCusName.replace(/[\\/:*?"<>|]/g, '').trim();
-    const cDate = quot.createdDate ? new Date(quot.createdDate.replace(' ', 'T')) : new Date();
-    const createDay = String(cDate.getDate()).padStart(2, '0');
-    const mDate = quot.lastModifiedDate ? new Date(quot.lastModifiedDate.replace(' ', 'T')) : new Date();
-    const editDD = String(mDate.getDate()).padStart(2, '0');
-    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-    const editMMM = months[mDate.getMonth()];
-    const editYYYY = mDate.getFullYear();
-    const editHH = String(mDate.getHours()).padStart(2, '0');
-    const editMin = String(mDate.getMinutes()).padStart(2, '0');
-    const lastEditStr = `${editDD}${editMMM}${editYYYY}${editHH}${editMin}`;
-    const exportFileName = `AIPD_INVOICE_${safeCusName}_${createDay}${lastEditStr}.pdf`;
-
-    // 2. คำนวณราคา
+const handleDownloadPDF = (quot) => {
+    console.log("กำลังเตรียมข้อมูลสร้าง PDF...", quot);
+    const exportFileName = generateExportFileName(quot);
     const customerFull = customers.find(c => c.id?.toString() === quot.customerId?.toString()) || {};
     const isPerBox = quot.displayMode !== 'detailed';
+
     const marginBox = (parseFloat(quot.profitMarginBox) || 0) / 100;
     const marginBlock = (parseFloat(quot.profitMarginBlock) || 0) / 100;
     const marginDieCut = (parseFloat(quot.profitMarginDieCut) || 0) / 100;
@@ -911,6 +894,7 @@ const handleDownloadInvoicePDF = (quot) => {
     let sumSellingPrice = 0;
     const itemsRaw = [];
     
+    // Pass 1: คำนวณราคาทั้งหมด (ปัดเศษขึ้นทีละ 0.25 เสมอ)
     (quot.items || []).forEach(item => {
         const boxStyle = boxStyles.find(b => b.id?.toString() === item.boxStyleId?.toString());
         const paper = paperTypes.find(p => p.id?.toString() === item.paperTypeId?.toString());
@@ -928,6 +912,7 @@ const handleDownloadInvoicePDF = (quot) => {
         
         const rawBoxCost = (areaSqFt * pPrice) + (parseFloat(item.printCostPerBox) || 0);
         const sellBoxCost = roundUpQuarter(rawBoxCost * (1 + marginBox));
+        
         const blockCost = (item.printBlocks1 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0) + (item.printBlocks2 || []).reduce((s, b) => s + (parseFloat(b.price) || 0), 0);
         const sellBlockCost = roundUpQuarter(blockCost * (1 + marginBlock));
 
@@ -937,6 +922,7 @@ const handleDownloadInvoicePDF = (quot) => {
             dieCutCost = (parseFloat(item.dieCutW) || 0) * (parseFloat(item.dieCutL) || 0) * (mold ? parseFloat(mold.price) : 0); 
         }
         const sellDieCutCost = roundUpQuarter(dieCutCost * (1 + marginDieCut));
+        
         const qty = parseInt(item.quantity) || 1;
         const itemSellingTotal = (sellBoxCost * qty) + sellBlockCost + sellDieCutCost;
         
@@ -952,11 +938,14 @@ const handleDownloadInvoicePDF = (quot) => {
     const netTotal = totalAfterDiscount * 1.07;
     const factor = totalWithProfit > 0 ? (totalAfterDiscount / totalWithProfit) : 1;
 
+    // Pass 2: เตรียมข้อมูลให้ PDF
     const itemsCalc = itemsRaw.map(raw => {
+        // ✨ จุดที่เพิ่มการปัดเศษ: ให้บล็อคพิมพ์แต่ละชิ้นถูกปัดเศษด้วย
         const blocks = [...(raw.itemRef.printBlocks1||[]), ...(raw.itemRef.printBlocks2||[])].map(b => ({
             ...b, 
             price: roundUpQuarter(parseFloat(b.price||0) * (1 + marginBlock)) 
         }));
+        
         const ratio = sumSellingPrice > 0 ? (raw.itemSellingTotal / sumSellingPrice) : 0;
         const itemOverhead = (setup + shipCost) * ratio; 
         const itemTotalWithOverhead = raw.itemSellingTotal + itemOverhead;
@@ -977,9 +966,7 @@ const handleDownloadInvoicePDF = (quot) => {
     });
 
     const calculatedTotals = { itemsCalc, setupCost: setup, shipCost: shipCost, totalAfterDiscount, netTotal, factor };
-    
-    // 3. ส่งข้อมูลไปหน้า PDF แจ้งหนี้
-    generateInvoicePDF(quot, companyData, calculatedTotals, {}, customerFull, exportFileName);
+    generateQuotationPDF(quot, companyData, calculatedTotals, {}, customerFull, exportFileName);
 };
 
 
@@ -2105,8 +2092,7 @@ const getItemSummaryList = (quot) => {
                                             {/* คอลัมน์ 1: จัดการ */}
                                             <td className="p-4 text-center align-top">
                                                 <div className="flex justify-center gap-2">
-                                                    <button onClick={() => handleDownloadPDF(quot)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded transition-colors" title="ดาวน์โหลดใบเสนอราคา (Quotation)">📄</button>
-                                                    <button onClick={() => handleDownloadInvoicePDF(quot)} className="p-1.5 text-emerald-600 hover:bg-emerald-100 rounded transition-colors" title="ดาวน์โหลดใบแจ้งหนี้ (Invoice)">🧾</button>
+                                                    <button onClick={() => handleDownloadPDF(quot)} className="p-1.5 text-green-600 hover:bg-green-100 rounded transition-colors" title="ดาวน์โหลด PDF">📄</button>
                                                     <button onClick={() => handleEditQuotation(quot)} className="p-1.5 text-blue-500 hover:bg-blue-100 rounded transition-colors" title="แก้ไขใบเสนอราคา"><Edit size={16} /></button>
                                                     <button onClick={() => handleDeleteQuotation(quot.id)} className="p-1.5 text-red-500 hover:bg-red-100 rounded transition-colors" title="ลบใบเสนอราคา"><Trash2 size={16} /></button>
                                                 </div>

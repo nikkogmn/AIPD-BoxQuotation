@@ -63,7 +63,7 @@ const styles = StyleSheet.create({
   pageNumber: { position: 'absolute', bottom: 30, right: 40, fontSize: 12, color: '#6b7280', fontFamily: 'THSarabunNew' }
 });
 
-export const QuotationPDF = ({ quot, company, totals, customerFull, isInvoice }) => {
+export const QuotationPDF = ({ quot, company, totals, customerFull }) => {
   const factor = totals?.factor || 1;
   const shippingAddress = quot.shippingType === 'pickup' ? 'ลูกค้ามารับเอง (Pick up at Factory)' : (customerFull?.addressShip || '-');
 
@@ -224,7 +224,7 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
           </View>
         </View>
 
-        <Text style={styles.docTitle}>{isInvoice ? 'ใบแจ้งหนี้ (INVOICE)' : 'ใบเสนอราคา (QUOTATION)'}</Text>
+        <Text style={styles.docTitle}>ใบเสนอราคา (QUOTATION)</Text>
 
         <Text style={styles.appreciationText}>
           {company?.nameTH || 'ทางบริษัทฯ'} ขอขอบพระคุณเป็นอย่างยิ่งที่ท่านได้ให้ความไว้วางใจและพิจารณาเลือกใช้บริการของเรา 
@@ -240,7 +240,7 @@ const isPerBox = quot.displayMode !== 'detailed'; // ดึงค่าโหม
           </View>
           <View style={{ width: '40%', textAlign: 'right' }}>
             <Text><Text style={styles.infoLabel}>เลขที่เอกสาร : </Text>{quot.quotationNo || '-'}</Text>
-            <Text><Text style={styles.infoLabel}>วันที่ออก{isInvoice ? 'ใบแจ้งหนี้' : 'ใบเสนอราคา'} : </Text>{formatThaiDate(quot.createdDate)}</Text>
+            <Text><Text style={styles.infoLabel}>วันที่ออกใบเสนอราคา : </Text>{formatThaiDate(quot.createdDate)}</Text>
             <Text><Text style={styles.infoLabel}>ราคานี้มีผลถึงวันที่ : </Text>{formatThaiDate(quot.createdDate, 10)}</Text>
           </View>
         </View>
